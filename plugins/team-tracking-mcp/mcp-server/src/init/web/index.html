@@ -3,123 +3,228 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
     <title>team-tracking-mcp · setup</title>
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
-    <main>
-      <header>
-        <h1>team-tracking-mcp</h1>
-        <p class="subtitle">Pick a tracker, configure, save.</p>
-        <ol class="steps">
-          <li data-step="1" class="active">Adapter</li>
-          <li data-step="2">Configure</li>
-          <li data-step="3">Save</li>
+    <main class="page">
+
+      <header class="masthead">
+        <p class="eyebrow">team-tracking-mcp · localhost setup</p>
+        <h1 class="display">Initialize the tracker.</h1>
+        <p class="lead">
+          A short three-step questionnaire. Choose an adapter, supply
+          credentials, and write the result to
+          <code class="mono">./.team-tracking/config.json</code>.
+        </p>
+
+        <ol class="steps" aria-label="setup progress">
+          <li data-step="1" class="active">
+            <span class="steps__num">01</span>
+            <span class="steps__label">Adapter</span>
+          </li>
+          <li data-step="2">
+            <span class="steps__num">02</span>
+            <span class="steps__label">Configure</span>
+          </li>
+          <li data-step="3">
+            <span class="steps__num">03</span>
+            <span class="steps__label">Save</span>
+          </li>
         </ol>
       </header>
 
-      <section data-screen="1" class="screen active">
-        <h2>Pick an adapter</h2>
-        <div class="tile-row">
-          <button class="tile" data-adapter="obsidian-kanban">
-            <strong>Obsidian Kanban</strong>
-            <span>Local vault, file-backed. Fastest path; no external creds.</span>
-          </button>
-          <button class="tile" data-adapter="jira">
-            <strong>Jira</strong>
-            <span>Cloud Jira. Requires base URL, email, API token.</span>
-          </button>
-        </div>
+      <!-- ─── 01 · Adapter ─────────────────────────────────────────── -->
+      <section class="screen active" data-screen="1" aria-labelledby="screen1-title">
+        <p class="kicker">Step 01 of 03</p>
+        <h2 class="display display--lg" id="screen1-title">Where will tickets live?</h2>
+        <p class="lead lead--narrow">
+          Choose once. You can reconfigure later via
+          <code class="mono">/team-tracking-mcp:reconfigure</code>.
+        </p>
+
+        <ul class="tile-list">
+          <li>
+            <button type="button" class="tile" data-adapter="obsidian-kanban">
+              <span class="tile__index" aria-hidden="true">i.</span>
+              <span class="tile__body">
+                <span class="tile__name">Obsidian Kanban</span>
+                <span class="tile__desc">
+                  Local vault, file-backed. Fastest path — no external
+                  credentials. Boards render in the Obsidian Kanban community
+                  plugin; tickets are plain Markdown on disk.
+                </span>
+                <span class="tile__meta">Local · file-backed · zero credentials</span>
+              </span>
+              <span class="tile__chevron" aria-hidden="true">→</span>
+            </button>
+          </li>
+          <li>
+            <button type="button" class="tile" data-adapter="jira">
+              <span class="tile__index" aria-hidden="true">ii.</span>
+              <span class="tile__body">
+                <span class="tile__name">Jira Cloud</span>
+                <span class="tile__desc">
+                  Cloud Jira via REST. Requires a base URL, an email, and an
+                  API token. Custom fields recommended; falls back gracefully
+                  to fenced sections in the description.
+                </span>
+                <span class="tile__meta">Remote · REST · requires API token</span>
+              </span>
+              <span class="tile__chevron" aria-hidden="true">→</span>
+            </button>
+          </li>
+        </ul>
       </section>
 
-      <section data-screen="2" class="screen">
-        <h2>Configure adapter</h2>
+      <!-- ─── 02 · Configure ─────────────────────────────────────── -->
+      <section class="screen" data-screen="2" aria-labelledby="screen2-title">
+        <p class="kicker">Step 02 of 03</p>
+        <h2 class="display display--lg" id="screen2-title">Configure the adapter.</h2>
+        <p class="lead lead--narrow">
+          Only the fields for the adapter you picked are shown. Defaults work
+          for Obsidian Kanban; Jira needs credentials.
+        </p>
 
-        <form id="form-obsidian-kanban" class="adapter-form">
-          <label>
-            <span>Vault path (absolute or relative to cwd)</span>
+        <form id="form-obsidian-kanban" class="adapter-form" autocomplete="off">
+          <label class="field">
+            <span class="field__label">Vault path</span>
             <input name="vaultPath" required placeholder="/Users/me/vault" />
+            <span class="field__hint">Absolute path, or relative to the current working directory.</span>
           </label>
-          <label>
-            <span>Project name</span>
-            <input name="projectName" required placeholder="Autopilot" />
+
+          <label class="field">
+            <span class="field__label">Project name</span>
+            <input name="projectName" required placeholder="Acme" />
+            <span class="field__hint">Logical name. Appears in <code class="mono">list_board()</code> output.</span>
           </label>
-          <label>
-            <span>Project folder (under vault/projects/)</span>
+
+          <label class="field">
+            <span class="field__label">Project folder</span>
             <input
               name="adapterProjectRef"
               required
-              placeholder="projects/Autopilot"
-              value="projects/Autopilot"
+              placeholder="projects/Acme"
+              value="projects/Acme"
             />
+            <span class="field__hint">Folder under <code class="mono">vault/projects/</code> the tickets land in.</span>
           </label>
         </form>
 
-        <form id="form-jira" class="adapter-form">
-          <label>
-            <span>Base URL</span>
+        <form id="form-jira" class="adapter-form" autocomplete="off">
+          <p class="kicker kicker--small">Credentials</p>
+
+          <label class="field">
+            <span class="field__label">Base URL</span>
             <input name="baseUrl" required placeholder="https://acme.atlassian.net" />
           </label>
-          <label>
-            <span>Email</span>
+
+          <label class="field">
+            <span class="field__label">Email</span>
             <input name="email" type="email" required placeholder="you@acme.com" />
           </label>
-          <label>
-            <span>API token</span>
+
+          <label class="field">
+            <span class="field__label">API token</span>
             <input name="apiToken" type="password" required />
+            <span class="field__hint">
+              Atlassian → Account → Security → API tokens. Stored only on disk in
+              <code class="mono">.team-tracking/config.json</code>.
+            </span>
           </label>
-          <label>
-            <span>Project name</span>
-            <input name="projectName" required placeholder="Autopilot" />
+
+          <p class="kicker kicker--small">Project</p>
+
+          <label class="field">
+            <span class="field__label">Project name</span>
+            <input name="projectName" required placeholder="Acme" />
           </label>
-          <label>
-            <span>Jira project key</span>
-            <input name="adapterProjectRef" required placeholder="AUTO" />
+
+          <label class="field">
+            <span class="field__label">Jira project key</span>
+            <input name="adapterProjectRef" required placeholder="ACME" />
           </label>
-          <fieldset>
-            <legend>Status mapping (canonical → Jira)</legend>
-            <label>
-              <span>Backlog</span>
+
+          <p class="kicker kicker--small">Status mapping <span class="kicker__sub">canonical → Jira</span></p>
+
+          <div class="status-grid">
+            <label class="field field--inline">
+              <span class="field__label">Backlog</span>
               <input name="status_Backlog" value="Backlog" />
             </label>
-            <label>
-              <span>Todo</span>
+            <label class="field field--inline">
+              <span class="field__label">Todo</span>
               <input name="status_Todo" value="To Do" />
             </label>
-            <label>
-              <span>In Progress</span>
+            <label class="field field--inline">
+              <span class="field__label">In&nbsp;Progress</span>
               <input name="status_InProgress" value="In Progress" />
             </label>
-            <label>
-              <span>In Review</span>
+            <label class="field field--inline">
+              <span class="field__label">In&nbsp;Review</span>
               <input name="status_InReview" value="In Review" />
             </label>
-            <label>
-              <span>Done</span>
+            <label class="field field--inline">
+              <span class="field__label">Done</span>
               <input name="status_Done" value="Done" />
             </label>
-            <label>
-              <span>Blocked</span>
+            <label class="field field--inline">
+              <span class="field__label">Blocked</span>
               <input name="status_Blocked" value="Blocked" />
             </label>
-          </fieldset>
+          </div>
         </form>
 
-        <div class="row">
-          <button class="ghost" data-back>Back</button>
-          <button class="primary" data-next>Next</button>
+        <div class="actions">
+          <button type="button" class="btn btn--ghost" data-back>
+            <span aria-hidden="true">←</span>
+            <span>Back</span>
+          </button>
+          <button type="button" class="btn btn--primary" data-next>
+            <span>Continue</span>
+            <span aria-hidden="true">→</span>
+          </button>
         </div>
       </section>
 
-      <section data-screen="3" class="screen">
-        <h2>Review &amp; save</h2>
-        <pre id="preview"></pre>
-        <div class="row">
-          <button class="ghost" data-back>Back</button>
-          <button class="primary" id="save">Save config</button>
+      <!-- ─── 03 · Save ──────────────────────────────────────────── -->
+      <section class="screen" data-screen="3" aria-labelledby="screen3-title">
+        <p class="kicker">Step 03 of 03</p>
+        <h2 class="display display--lg" id="screen3-title">Review &amp; save.</h2>
+        <p class="lead lead--narrow">
+          The result lands at <code class="mono">./.team-tracking/config.json</code>.
+          The MCP server reads it on the next session boot.
+        </p>
+
+        <figure class="preview">
+          <figcaption class="preview__caption">.team-tracking/config.json</figcaption>
+          <pre id="preview"></pre>
+        </figure>
+
+        <div class="actions">
+          <button type="button" class="btn btn--ghost" data-back>
+            <span aria-hidden="true">←</span>
+            <span>Back</span>
+          </button>
+          <button type="button" class="btn btn--primary" id="save">
+            <span>Save config</span>
+            <span aria-hidden="true">↵</span>
+          </button>
         </div>
+
         <p id="status" role="status" aria-live="polite"></p>
       </section>
+
+      <footer class="colophon">
+        <p>
+          team-tracking-mcp · setup wizard
+        </p>
+        <p class="colophon__sub">
+          Ephemeral localhost server · token-gated · shuts down after save.
+        </p>
+      </footer>
+
     </main>
     <script src="app.js"></script>
   </body>

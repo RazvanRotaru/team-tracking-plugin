@@ -26,7 +26,7 @@ function usage(): string {
 
   --adapter            obsidian-kanban | jira
   --vault              (obsidian) path to vault root
-  --project            project name (e.g. Autopilot)
+  --project            project name (e.g. Acme)
   --project-ref        adapter-side project ref (default: project name for obsidian)
   --lock-ttl           lock TTL in seconds (default: 1800)
   --jira-base-url      (jira) Atlassian base URL

@@ -24,7 +24,7 @@ describe("runHeadlessInit", () => {
       "--vault",
       path.join(dir, "vault"),
       "--project",
-      "Autopilot",
+      "Acme",
       "--config",
       target,
       "--no-gitignore",
@@ -32,7 +32,7 @@ describe("runHeadlessInit", () => {
     expect(r.configPath).toBe(target);
     const loaded = await loadConfig(target);
     expect(loaded.adapter).toBe("obsidian-kanban");
-    expect(loaded.projects[0]?.name).toBe("Autopilot");
+    expect(loaded.projects[0]?.name).toBe("Acme");
   });
 
   it("writes a valid jira config", async () => {
@@ -47,9 +47,9 @@ describe("runHeadlessInit", () => {
       "--jira-api-token",
       "secret",
       "--project",
-      "Autopilot",
+      "Acme",
       "--project-ref",
-      "AUTO",
+      "ACME",
       "--config",
       target,
       "--no-gitignore",
@@ -58,7 +58,7 @@ describe("runHeadlessInit", () => {
     const loaded = await loadConfig(target);
     if (loaded.adapter !== "jira") throw new Error("expected jira");
     expect(loaded.adapterConfig.baseUrl).toBe("https://acme.atlassian.net");
-    expect(loaded.projects[0]?.adapterProjectRef).toBe("AUTO");
+    expect(loaded.projects[0]?.adapterProjectRef).toBe("ACME");
   });
 
   it("updates .gitignore in a git repo by default", async () => {

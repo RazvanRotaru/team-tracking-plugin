@@ -59,7 +59,7 @@ For scripted setup (CI, dotfiles), the same flow runs headlessly:
 
 ```bash
 node plugins/team-tracking-mcp/mcp-server/dist/init/cli.js \
-  --adapter obsidian-kanban --vault ./vault --project Autopilot
+  --adapter obsidian-kanban --vault ./vault --project Acme
 ```
 
 ## Try the demo

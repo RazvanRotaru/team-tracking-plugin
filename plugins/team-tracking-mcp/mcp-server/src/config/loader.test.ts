@@ -21,7 +21,7 @@ describe("config", () => {
       version: 1,
       adapter: "obsidian-kanban",
       adapterConfig: { vaultPath: path.join(dir, "vault") },
-      projects: [{ name: "Autopilot", adapterProjectRef: "projects/Autopilot" }],
+      projects: [{ name: "Acme", adapterProjectRef: "projects/Acme" }],
       lockTtlSeconds: 1800,
     };
     const target = path.join(dir, ".team-tracking", "config.json");

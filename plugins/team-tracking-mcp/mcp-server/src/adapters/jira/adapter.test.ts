@@ -46,7 +46,7 @@ const baseConfig = {
     Done: "Done",
     Blocked: "Blocked",
   },
-  projects: [{ name: "P", adapterProjectRef: "AUTO" }],
+  projects: [{ name: "P", adapterProjectRef: "ACME" }],
 };
 
 describe("JiraAdapter (mock fetch)", () => {
@@ -57,7 +57,7 @@ describe("JiraAdapter (mock fetch)", () => {
         {
           method: "POST",
           pathRe: /^\/rest\/api\/3\/issue$/,
-          handler: () => ({ status: 201, body: { id: "10001", key: "AUTO-1" } }),
+          handler: () => ({ status: 201, body: { id: "10001", key: "ACME-1" } }),
         },
       ],
       calls,
@@ -69,11 +69,11 @@ describe("JiraAdapter (mock fetch)", () => {
       priority: "P0",
       labels: ["x"],
     });
-    expect(ref).toEqual({ project: "P", id: "AUTO-1" });
+    expect(ref).toEqual({ project: "P", id: "ACME-1" });
     expect(calls).toHaveLength(1);
     const body = calls[0]?.body as { fields: Record<string, unknown> };
     expect(body.fields.summary).toBe("Build it");
-    expect((body.fields.project as { key: string }).key).toBe("AUTO");
+    expect((body.fields.project as { key: string }).key).toBe("ACME");
     expect((body.fields.issuetype as { name: string }).name).toBe("Task");
     expect((body.fields.priority as { name: string }).name).toBe("Highest");
     expect(body.fields.labels).toEqual(["x"]);
@@ -85,12 +85,12 @@ describe("JiraAdapter (mock fetch)", () => {
       [
         {
           method: "GET",
-          pathRe: /^\/rest\/api\/3\/issue\/AUTO-7/,
+          pathRe: /^\/rest\/api\/3\/issue\/ACME-7/,
           handler: () => ({
             status: 200,
             body: {
               id: "1",
-              key: "AUTO-7",
+              key: "ACME-7",
               fields: {
                 summary: "T",
                 description: { type: "doc", version: 1, content: [] },
@@ -113,7 +113,7 @@ describe("JiraAdapter (mock fetch)", () => {
       calls,
     );
     const a = new JiraAdapter({ ...baseConfig, fetchImpl });
-    const t = await a.getTicket({ project: "P", id: "AUTO-7" });
+    const t = await a.getTicket({ project: "P", id: "ACME-7" });
     expect(t).not.toBeNull();
     if (!t) return;
     expect(t.title).toBe("T");
@@ -129,19 +129,19 @@ describe("JiraAdapter (mock fetch)", () => {
       [
         {
           method: "GET",
-          pathRe: /^\/rest\/api\/3\/issue\/AUTO-1/,
+          pathRe: /^\/rest\/api\/3\/issue\/ACME-1/,
           handler: () => ({
             status: 200,
             body: {
               id: "1",
-              key: "AUTO-1",
+              key: "ACME-1",
               fields: { description: "" },
             },
           }),
         },
         {
           method: "PUT",
-          pathRe: /^\/rest\/api\/3\/issue\/AUTO-1/,
+          pathRe: /^\/rest\/api\/3\/issue\/ACME-1/,
           handler: () => ({ status: 204 }),
         },
       ],
@@ -149,7 +149,7 @@ describe("JiraAdapter (mock fetch)", () => {
     );
     const a = new JiraAdapter({ ...baseConfig, fetchImpl });
     await a.writeLock(
-      { project: "P", id: "AUTO-1" },
+      { project: "P", id: "ACME-1" },
       {
         owner: "alice",
         token: "tok_x",
@@ -183,7 +183,7 @@ describe("JiraAdapter (mock fetch)", () => {
       calls,
     );
     const a = new JiraAdapter({ ...baseConfig, fetchImpl });
-    await a.appendLog({ project: "P", id: "AUTO-1" }, "hello world");
+    await a.appendLog({ project: "P", id: "ACME-1" }, "hello world");
     expect(calls).toHaveLength(1);
     const body = calls[0]?.body as {
       body: { content: Array<{ content: Array<{ text: string }> }> };

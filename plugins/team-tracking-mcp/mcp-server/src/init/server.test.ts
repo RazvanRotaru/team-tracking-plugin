@@ -32,10 +32,20 @@ describe("init web server", () => {
     await new Promise((r) => setImmediate(r));
     expect(urlCaptured).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/\?t=[A-Za-z0-9_-]+$/);
 
-    // GET / with token → 200 HTML
+    // GET / with token → 200 HTML, with the token rewritten onto subresource
+    // refs so the browser doesn't drop it on the relative CSS/JS fetches.
     const html = await fetch(urlCaptured);
     expect(html.status).toBe(200);
-    expect(await html.text()).toContain("team-tracking-mcp");
+    const htmlText = await html.text();
+    const u0 = new URL(urlCaptured);
+    const tokenStr = u0.searchParams.get("t") ?? "";
+    expect(htmlText).toContain("team-tracking-mcp");
+    expect(htmlText).toContain(`href="style.css?t=${tokenStr}"`);
+    expect(htmlText).toContain(`src="app.js?t=${tokenStr}"`);
+
+    // GET /style.css with token → 200 CSS
+    const css = await fetch(`${u0.origin}/style.css?t=${tokenStr}`);
+    expect(css.status).toBe(200);
 
     // GET / without token → 401
     const noToken = await fetch(urlCaptured.replace(/\?.*/, ""));
@@ -50,7 +60,7 @@ describe("init web server", () => {
         version: 1,
         adapter: "obsidian-kanban",
         adapterConfig: { vaultPath: path.join(dir, "vault") },
-        projects: [{ name: "Autopilot", adapterProjectRef: "projects/Autopilot" }],
+        projects: [{ name: "Acme", adapterProjectRef: "projects/Acme" }],
         lockTtlSeconds: 1800,
       }),
     });

@@ -105,7 +105,18 @@ export async function runInitWeb(opts: RunInitWebOpts = {}): Promise<InitWebResu
           return;
         }
         const full = path.join(staticDir(), safe);
-        const body = await fs.readFile(full);
+        let body: Buffer | string = await fs.readFile(full);
+        // Static asset references in index.html are relative — browsers don't
+        // copy the page's `?t=<token>` query onto them, which makes the
+        // subsequent CSS/JS requests fail the token check. Rewrite them to
+        // carry the token explicitly so the wizard renders.
+        if (full.endsWith(".html")) {
+          const t = encodeURIComponent(token);
+          body = body
+            .toString("utf8")
+            .replace(/href="style\.css"/g, `href="style.css?t=${t}"`)
+            .replace(/src="app\.js"/g, `src="app.js?t=${t}"`);
+        }
         res.writeHead(200, { "content-type": pickContentType(full) }).end(body);
         return;
       }

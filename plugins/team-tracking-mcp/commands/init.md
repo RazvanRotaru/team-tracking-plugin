@@ -15,12 +15,12 @@ To run headlessly (CI / scripts) instead, pass adapter args:
 ```bash
 # Obsidian
 node "${CLAUDE_PLUGIN_ROOT}/mcp-server/dist/init/cli.js" \
-  --adapter obsidian-kanban --vault ./vault --project Autopilot
+  --adapter obsidian-kanban --vault ./vault --project Acme
 
 # Jira
 node "${CLAUDE_PLUGIN_ROOT}/mcp-server/dist/init/cli.js" \
   --adapter jira \
   --jira-base-url https://acme.atlassian.net \
   --jira-email you@acme.com --jira-api-token "$JIRA_API_TOKEN" \
-  --project Autopilot --project-ref AUTO
+  --project Acme --project-ref ACME
 ```
