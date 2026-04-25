@@ -14,7 +14,8 @@
     "lint": "biome check .",
     "format": "biome format --write .",
     "dev": "pnpm --filter team-tracking-mcp-server dev",
-    "init": "pnpm --filter team-tracking-mcp-server init"
+    "init": "pnpm --filter team-tracking-mcp-server init",
+    "demo": "bash scripts/setup-demo.sh"
   },
   "devDependencies": {
     "@biomejs/biome": "1.9.4",
