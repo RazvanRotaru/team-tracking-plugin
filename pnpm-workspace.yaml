@@ -1,2 +1,2 @@
 packages:
-  - mcp-server
+  - plugins/team-tracking-mcp/mcp-server

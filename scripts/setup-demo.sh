@@ -22,16 +22,18 @@ echo "→ build mcp-server"
 echo "→ reset prior demo state under $TARGET"
 rm -rf "$TARGET/projects" "$TARGET/.team-tracking"
 
+PLUGIN_ROOT="$REPO_ROOT/plugins/team-tracking-mcp"
+
 echo "→ write team-tracking config (vault=$TARGET, project=Demo)"
 cd "$TARGET"
-node "$REPO_ROOT/mcp-server/dist/init/cli.js" \
+node "$PLUGIN_ROOT/mcp-server/dist/init/cli.js" \
   --adapter obsidian-kanban \
   --vault "$TARGET" \
   --project Demo \
   --no-gitignore >/dev/null
 
 echo "→ populate sample tickets"
-node "$REPO_ROOT/mcp-server/scripts/populate-demo.mjs" >/dev/null
+node "$PLUGIN_ROOT/mcp-server/scripts/populate-demo.mjs" >/dev/null
 
 cat <<EOF
 

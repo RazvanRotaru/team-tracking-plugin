@@ -8,7 +8,7 @@
   "plugins": [
     {
       "name": "team-tracking-mcp",
-      "source": ".",
+      "source": "./plugins/team-tracking-mcp",
       "description": "MCP server + adapters (Obsidian Kanban, Jira), three skills (orchestrate, execute, usage), and three slash commands."
     }
   ]

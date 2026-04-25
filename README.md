@@ -12,9 +12,9 @@ See [`examples/`](examples/) for a browseable snapshot of an orchestrator-driven
 - **Two adapters today**: Obsidian Kanban (file-backed, local vault) and Jira (cloud, with custom-field or fenced-section storage).
 - **Slash commands**: `/team-tracking:init`, `/team-tracking:status`, `/team-tracking:reconfigure`.
 - **Three skills** that teach Claude how to use the system:
-  - [`team-tracking-orchestrate`](skills/team-tracking-orchestrate/SKILL.md) — for the planner: read the board, decompose, pick priorities, consult the architect, dispatch.
-  - [`team-tracking-execute`](skills/team-tracking-execute/SKILL.md) — for specialist subagents: acquire → checkpoint → release, plus how to escalate when a subtask is too complex.
-  - [`team-tracking-usage`](skills/team-tracking-usage/SKILL.md) — tool reference (the ten tools, lock state machine, typed errors).
+  - [`team-tracking-orchestrate`](plugins/team-tracking-mcp/skills/team-tracking-orchestrate/SKILL.md) — for the planner: read the board, decompose, pick priorities, consult the architect, dispatch.
+  - [`team-tracking-execute`](plugins/team-tracking-mcp/skills/team-tracking-execute/SKILL.md) — for specialist subagents: acquire → checkpoint → release, plus how to escalate when a subtask is too complex.
+  - [`team-tracking-usage`](plugins/team-tracking-mcp/skills/team-tracking-usage/SKILL.md) — tool reference (the ten tools, lock state machine, typed errors).
 
 ## Install
 
@@ -58,7 +58,7 @@ This launches a token-protected localhost page. Pick Obsidian Kanban or Jira, fi
 For scripted setup (CI, dotfiles), the same flow runs headlessly:
 
 ```bash
-node mcp-server/dist/init/cli.js \
+node plugins/team-tracking-mcp/mcp-server/dist/init/cli.js \
   --adapter obsidian-kanban --vault ./vault --project Autopilot
 ```
 
@@ -79,18 +79,20 @@ To open it as a real kanban: in Obsidian, **File → Open vault → `examples/de
 
 ```
 team-tracking-plugin/
-  .claude-plugin/plugin.json    # plugin manifest registered with Claude Code
-  commands/                     # /team-tracking:* slash commands
-  skills/team-tracking-usage/   # orchestrator-facing skill
-  mcp-server/
-    src/
-      domain/                   # pure types, invariants, lock state machine
-      adapters/                 # TrackerAdapter + obsidian-kanban + jira
-      server/                   # per-ref mutex, TicketService, MCP tools
-      config/, init/            # config loader + init CLI / webpage
-    scripts/populate-demo.mjs   # demo content generator
-  scripts/setup-demo.sh         # `pnpm demo` entrypoint
-  examples/demo/                # committed example vault
+  .claude-plugin/marketplace.json  # marketplace manifest (registered with Claude Code)
+  plugins/team-tracking-mcp/       # the plugin itself
+    .claude-plugin/plugin.json     #   plugin manifest
+    commands/                      #   /team-tracking:* slash commands
+    skills/                        #   orchestrate / execute / usage skills
+    mcp-server/
+      src/
+        domain/                    #     pure types, invariants, lock state machine
+        adapters/                  #     TrackerAdapter + obsidian-kanban + jira
+        server/                    #     per-ref mutex, TicketService, MCP tools
+        config/, init/             #     config loader + init CLI / webpage
+      scripts/populate-demo.mjs    #     demo content generator
+  scripts/setup-demo.sh            # `pnpm demo` entrypoint
+  examples/demo/                   # committed example vault
   docs/DOGFOOD.md
 ```
 

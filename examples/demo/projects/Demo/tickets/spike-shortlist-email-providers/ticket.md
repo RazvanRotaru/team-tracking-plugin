@@ -10,8 +10,8 @@ pr_url: null
 update: null
 progress_summary: null
 lock: null
-created: 2026-04-25T09:52:04.155Z
-updated: 2026-04-25T09:52:05.193Z
+created: 2026-04-25T20:38:36.752Z
+updated: 2026-04-25T20:38:37.986Z
 ---
 
 # Spike: shortlist email providers

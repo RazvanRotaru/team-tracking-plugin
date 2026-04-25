@@ -15,7 +15,7 @@ importers:
         specifier: 5.6.3
         version: 5.6.3
 
-  mcp-server:
+  plugins/team-tracking-mcp/mcp-server:
     dependencies:
       '@modelcontextprotocol/sdk':
         specifier: ^1.0.4
