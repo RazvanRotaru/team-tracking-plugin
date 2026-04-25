@@ -4,7 +4,7 @@
 
 A Claude Code plugin that gives an orchestrator and its specialist subagents a shared, durable view of the work they're driving. Tickets live in your real tracker (Obsidian Kanban or Jira); the plugin's MCP server is the contract between Claude and the board.
 
-See [`DESIGN.md`](DESIGN.md) for the full design and [`examples/`](examples/) for a browseable snapshot of an orchestrator-driven board.
+See [`examples/`](examples/) for a browseable snapshot of an orchestrator-driven board.
 
 ## What it ships
 
@@ -81,7 +81,7 @@ team-tracking-plugin/
     scripts/populate-demo.mjs   # demo content generator
   scripts/setup-demo.sh         # `pnpm demo` entrypoint
   examples/demo/                # committed example vault
-  DESIGN.md, IMPLEMENTATION_PLAN.md, docs/DOGFOOD.md
+  docs/DOGFOOD.md
 ```
 
 ## Development
