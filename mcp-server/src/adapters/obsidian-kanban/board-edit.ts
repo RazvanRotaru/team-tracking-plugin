@@ -127,9 +127,16 @@ function addCard(boardText: string, column: string, cardLine: string): string {
     insertAt += 1;
   }
 
+  // The kanban-plugin renderer requires a blank line between the last card
+  // and whatever follows (next column header or the %% settings block). If
+  // the line at insertAt isn't blank, inject a separator after the card.
+  const next = lines[insertAt] ?? "";
+  const needsTrailingBlank = next.trim() !== "";
+  const inserted = needsTrailingBlank ? [cardLine, ""] : [cardLine];
+
   const before = lines.slice(0, insertAt);
   const after = lines.slice(insertAt);
-  return [...before, cardLine, ...after].join("\n");
+  return [...before, ...inserted, ...after].join("\n");
 }
 
 /**
