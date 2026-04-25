@@ -134,19 +134,42 @@ Reading `update`, `progress_summary`, and the recent commit's diff together:
 - **Hallucination** — the summary claims work that isn't in the diff (e.g. "added integration tests for X" but no test files appear). Don't trust the visible fields; trust the diff. Adversarial review will catch this; your job is to make sure it gets there.
 - **Stuck loop** — two consecutive polls show the same `progress_summary` and no new checkpoint SHA. The specialist is spinning. Try a nudge (below); if the next poll still shows no progress, plan to recover via TTL.
 
-### Corrective levers
+### Corrective levers — the steering channel
 
-Be honest about what each lever actually does — none of them reach into a running subagent's tool loop.
+Specialists running [`team-tracking-execute`](../team-tracking-execute/SKILL.md) check `read_messages(ref, since=lastSeen)` at every checkpoint cycle. That's your synchronous-looking interrupt: post a message and the executor will pick it up the next time it pauses.
 
-1. **`append_log(ref, "ORCHESTRATOR-NUDGE: <directive>")`** — leaves a breadcrumb. The running specialist *may not* read its own log mid-flight. Treat the nudge as a message to the *next* specialist or to the adversarial reviewer, not as a synchronous interrupt.
-2. **Wait out the TTL** — if the specialist is unresponsive (no new checkpoint past TTL), the lock becomes recoverable. `acquire_ticket` returns the prior `recovered_checkpoint` and you can re-dispatch with corrective context.
-3. **Surface to the user / architect** — when drift is consequential (data loss, time pressure, architectural mistake), don't quietly absorb it. Get a human in the loop.
+```
+post_message(ref, {
+  from: "orchestrator",
+  kind: "nudge" | "question",
+  body: "Stay within auth/ — billing/ is out of scope.",
+})
+→ { id: "msg_abc...", at: "2026-04-25T10:30:00Z" }
+```
+
+What `kind` to use:
+- `nudge` — directional ("stay in scope X", "stop adding tests"). Executor ACKs.
+- `question` — answer expected ("what blocked the retry path?"). Executor responds.
+
+After posting, on your next 5–10 min sweep, read responses:
+
+```
+read_messages(ref, since=<your last sweep>)
+```
+
+Look for `kind == "response"` or `kind == "ack"` with `from == "executor"` (or whatever role identifier the specialist used).
+
+### When the channel isn't enough
+
+1. **Wait out the TTL** — if the specialist is unresponsive (no new checkpoint past TTL, no message reply), the lock becomes recoverable. `acquire_ticket` returns the prior `recovered_checkpoint` and you can re-dispatch with corrective context.
+2. **Surface to the user / architect** — when drift is consequential (data loss, time pressure, architectural mistake), don't quietly absorb it. Post a `question` *and* surface to a human in parallel.
 
 What you should **not** do:
 
 - Don't force-acquire a non-stale lock. The lock contract protects in-flight work; bypassing it corrupts state.
 - Don't update or rewrite the subtask's body / status while the specialist holds the lock — they may rely on those fields.
-- Don't over-poll. 5–10 min is the sweet spot. Re-reading every minute is noise; agents need contiguous focus too.
+- Don't over-poll the board. 5–10 min is the sweet spot. Re-reading every minute is noise; agents need contiguous focus too.
+- Don't post a message every few minutes "just to check." The steering channel is for substantive guidance; flooding it makes specialists ignore it.
 
 ## Polling for blocked / completed
 

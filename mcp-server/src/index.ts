@@ -38,6 +38,7 @@ export function buildServer(adapter: TrackerAdapter, ttlSeconds: number): McpSer
     ttlSeconds,
     now: () => new Date().toISOString(),
     mintToken: () => `tok_${randomUUID()}`,
+    mintMessageId: () => `msg_${randomUUID()}`,
   });
   const server = new McpServer(
     { name: "team-tracking-mcp", version: VERSION },

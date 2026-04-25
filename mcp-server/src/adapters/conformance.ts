@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { Lock, TicketRef } from "../domain/types.js";
+import type { Lock, Message, TicketRef } from "../domain/types.js";
 import type { TrackerAdapter } from "./types.js";
 
 export type ConformanceFixture = {
@@ -427,6 +427,91 @@ export function runConformance(name: string, makeFixture: () => Promise<Conforma
       await expect(fx.adapter.appendLog(ref, "second event")).resolves.toBeUndefined();
       // Ticket should still load cleanly afterwards.
       expect(await fx.adapter.getTicket(ref)).not.toBeNull();
+    });
+
+    // ── Steering channel ────────────────────────────────────────────────
+
+    it("readMessages returns [] for a ticket with no messages", async () => {
+      const ref = await fx.adapter.createTicket(fx.project, { type: "task", title: "X" });
+      expect(await fx.adapter.readMessages(ref)).toEqual([]);
+    });
+
+    it("postMessage → readMessages roundtrips every field", async () => {
+      const ref = await fx.adapter.createTicket(fx.project, { type: "task", title: "X" });
+      const msg: Message = {
+        id: "msg_1",
+        at: "2026-04-25T10:00:00Z",
+        from: "orchestrator",
+        kind: "nudge",
+        body: "Stay within auth/ — billing/ is out of scope.",
+        in_reply_to: null,
+      };
+      await fx.adapter.postMessage(ref, msg);
+      const all = await fx.adapter.readMessages(ref);
+      expect(all).toHaveLength(1);
+      expect(all[0]).toEqual(msg);
+    });
+
+    it("multiple messages preserve order and in_reply_to chains", async () => {
+      const ref = await fx.adapter.createTicket(fx.project, { type: "task", title: "X" });
+      await fx.adapter.postMessage(ref, {
+        id: "msg_1",
+        at: "2026-04-25T10:00:00Z",
+        from: "orchestrator",
+        kind: "question",
+        body: "are you still on auth/?",
+        in_reply_to: null,
+      });
+      await fx.adapter.postMessage(ref, {
+        id: "msg_2",
+        at: "2026-04-25T10:01:00Z",
+        from: "executor",
+        kind: "response",
+        body: "yes — finishing the token-refresh path.",
+        in_reply_to: "msg_1",
+      });
+      const all = await fx.adapter.readMessages(ref);
+      expect(all.map((m) => m.id)).toEqual(["msg_1", "msg_2"]);
+      expect(all[1]?.in_reply_to).toBe("msg_1");
+    });
+
+    it("readMessages with `since` filters by `at` lex order", async () => {
+      const ref = await fx.adapter.createTicket(fx.project, { type: "task", title: "X" });
+      await fx.adapter.postMessage(ref, {
+        id: "msg_1",
+        at: "2026-04-25T10:00:00Z",
+        from: "orchestrator",
+        kind: "nudge",
+        body: "first",
+        in_reply_to: null,
+      });
+      await fx.adapter.postMessage(ref, {
+        id: "msg_2",
+        at: "2026-04-25T10:05:00Z",
+        from: "orchestrator",
+        kind: "nudge",
+        body: "second",
+        in_reply_to: null,
+      });
+      const since = "2026-04-25T10:02:00Z";
+      const fresh = await fx.adapter.readMessages(ref, since);
+      expect(fresh).toHaveLength(1);
+      expect(fresh[0]?.id).toBe("msg_2");
+    });
+
+    it("multi-line message bodies survive a roundtrip", async () => {
+      const ref = await fx.adapter.createTicket(fx.project, { type: "task", title: "X" });
+      const body = "line one\n\nline three after blank\nline four";
+      await fx.adapter.postMessage(ref, {
+        id: "msg_ml",
+        at: "2026-04-25T10:00:00Z",
+        from: "executor",
+        kind: "response",
+        body,
+        in_reply_to: null,
+      });
+      const all = await fx.adapter.readMessages(ref);
+      expect(all[0]?.body).toBe(body);
     });
 
     // ── Ref identity ───────────────────────────────────────────────────

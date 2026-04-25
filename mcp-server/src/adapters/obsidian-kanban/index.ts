@@ -3,6 +3,7 @@ import { deriveLockState } from "../../domain/lock.js";
 import type {
   CreateTicketDTO,
   Lock,
+  Message,
   TicketDTO,
   TicketRef,
   TicketSummaryDTO,
@@ -399,6 +400,7 @@ export class ObsidianKanbanAdapter implements TrackerAdapter {
       body: parsed.body,
       children: await this.collectChildEntries(parentRef),
       log: parsed.log,
+      messages: parsed.messages,
     });
     await writeFileAtomic(this.ticketFile(parentRef), text);
   }
@@ -441,6 +443,7 @@ export class ObsidianKanbanAdapter implements TrackerAdapter {
       body: nextBody,
       children: await this.collectChildEntries(ref),
       log: parsed.log,
+      messages: parsed.messages,
     });
     await writeFileAtomic(this.ticketFile(ref), text);
 
@@ -475,6 +478,7 @@ export class ObsidianKanbanAdapter implements TrackerAdapter {
       body: parsed.body,
       children: await this.collectChildEntries(ref),
       log: parsed.log,
+      messages: parsed.messages,
     });
     await writeFileAtomic(this.ticketFile(ref), text);
   }
@@ -496,6 +500,7 @@ export class ObsidianKanbanAdapter implements TrackerAdapter {
       body: parsed.body,
       children: await this.collectChildEntries(ref),
       log: parsed.log,
+      messages: parsed.messages,
     });
     await writeFileAtomic(this.ticketFile(ref), text);
   }
@@ -509,7 +514,28 @@ export class ObsidianKanbanAdapter implements TrackerAdapter {
       body: parsed.body,
       children: await this.collectChildEntries(ref),
       log: [...parsed.log, stamped],
+      messages: parsed.messages,
     });
     await writeFileAtomic(this.ticketFile(ref), text);
+  }
+
+  async postMessage(ref: TicketRef, message: Message): Promise<void> {
+    const parsed = await this.loadParsed(ref);
+    if (!parsed) throw new Error(`ticket not found: ${ref.id}`);
+    const text = renderTicketFile({
+      frontmatter: parsed.frontmatter,
+      body: parsed.body,
+      children: await this.collectChildEntries(ref),
+      log: parsed.log,
+      messages: [...parsed.messages, message],
+    });
+    await writeFileAtomic(this.ticketFile(ref), text);
+  }
+
+  async readMessages(ref: TicketRef, since?: string): Promise<Message[]> {
+    const parsed = await this.loadParsed(ref);
+    if (!parsed) return [];
+    const all = [...parsed.messages].sort((a, b) => a.at.localeCompare(b.at));
+    return since ? all.filter((m) => m.at > since) : all;
   }
 }

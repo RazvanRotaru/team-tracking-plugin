@@ -73,6 +73,19 @@ const AppendLogSchema = {
   line: z.string().min(1),
 };
 
+const PostMessageSchema = {
+  ref: TicketRefSchema,
+  from: z.string().min(1),
+  kind: z.string().optional(),
+  body: z.string().min(1),
+  in_reply_to: z.string().optional(),
+};
+
+const ReadMessagesSchema = {
+  ref: TicketRefSchema,
+  since: z.string().optional(),
+};
+
 type ToolResult = {
   content: Array<{ type: "text"; text: string }>;
   isError?: boolean;
@@ -216,5 +229,30 @@ export function registerTools(server: McpServer, service: TicketService): void {
       inputSchema: AppendLogSchema,
     },
     async ({ ref, line }) => unwrap(await service.appendLog(ref, line)),
+  );
+
+  server.registerTool(
+    "post_message",
+    {
+      description:
+        "Post a steering message on the ticket. Bidirectional, async channel " +
+        "between orchestrator and executor. Common kinds: nudge, question, " +
+        "response, ack, info. Returns the minted message (id, at).",
+      inputSchema: PostMessageSchema,
+    },
+    async ({ ref, from, kind, body, in_reply_to }) =>
+      unwrap(await service.postMessage(ref, { from, kind, body, in_reply_to })),
+  );
+
+  server.registerTool(
+    "read_messages",
+    {
+      description:
+        "Read the steering message stream on a ticket, ordered by `at` ascending. " +
+        "Pass `since` (ISO-8601) to get only messages newer than that time — typical " +
+        "polling pattern for both orchestrator and executor.",
+      inputSchema: ReadMessagesSchema,
+    },
+    async ({ ref, since }) => unwrap(await service.readMessages(ref, since)),
   );
 }

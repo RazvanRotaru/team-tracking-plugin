@@ -22,6 +22,7 @@ describe("TicketService (Obsidian-backed)", () => {
       ttlSeconds: 1800,
       now: () => new Date(nowMs).toISOString(),
       mintToken: () => `tok_${++tokenN}`,
+      mintMessageId: () => `msg_${++tokenN}`,
     });
   });
 

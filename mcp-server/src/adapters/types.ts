@@ -1,6 +1,7 @@
 import type {
   CreateTicketDTO,
   Lock,
+  Message,
   TicketDTO,
   TicketRef,
   TicketSummaryDTO,
@@ -38,4 +39,17 @@ export interface TrackerAdapter {
     progress: { update: string | null; progress_summary: string | null },
   ): Promise<void>;
   appendLog(ref: TicketRef, line: string): Promise<void>;
+
+  /**
+   * Append a steering message to the ticket. Adapters store the message
+   * verbatim; the server is responsible for minting `id` and `at`.
+   */
+  postMessage(ref: TicketRef, message: Message): Promise<void>;
+
+  /**
+   * Read steering messages, ordered by `at` ascending. If `since` is set,
+   * only messages with `at > since` are returned (string compare on ISO-8601
+   * is monotonic, so this is well-defined).
+   */
+  readMessages(ref: TicketRef, since?: string): Promise<Message[]>;
 }

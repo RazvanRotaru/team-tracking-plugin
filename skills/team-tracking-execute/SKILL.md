@@ -44,6 +44,33 @@ The orchestrator polls every 5–10 minutes while you work — reading your `pro
 - **Checkpoint often.** A long silence (no new checkpoint for >15 min) reads as "stuck or crashed" from the outside. Bank a SHA whenever there's a coherent unit of progress.
 - **Don't lie in the visible fields.** `progress_summary` should describe what the diff actually contains. If you claim to have written tests but the diff has none, the orchestrator (and the adversarial reviewer that reads the diff) will catch it — and rightly distrust the rest of your output.
 
+### Steering channel — read before each commit
+
+The orchestrator can leave directives on your ticket via `post_message`. **Check for new messages at every checkpoint cycle:**
+
+```
+read_messages(ref, since=<your last seen `at` value>)
+```
+
+Track the `at` of the most recent message you've handled. On startup, set `lastSeen = lock.acquired_at` (you start fresh). Each subsequent call passes the latest `at` you've already processed.
+
+For each new message where `from` is the orchestrator (or any non-executor role):
+
+1. **Read it.** Take it at face value — it's the orchestrator's view of where you should be.
+2. **Decide.** Will you comply, push back, or need to escalate?
+3. **ACK or respond.** Always reply, even if just to acknowledge:
+
+   ```
+   post_message(ref, {
+     from: "<your role>@<dispatch-id>",
+     kind: "ack",                     // or "response"
+     in_reply_to: <orchestrator-message-id>,
+     body: "Confirmed — staying within auth/. Will revert the billing/ change in next commit.",
+   })
+   ```
+
+If the orchestrator's directive is wrong (e.g. you have valid context they don't), push back — `kind: "response"` with reasoning. Don't silently comply with bad guidance; the orchestrator polls for your reply on its next sweep.
+
 After **every** git commit you intend to keep:
 
 ```

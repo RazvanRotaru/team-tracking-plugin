@@ -2,6 +2,7 @@ import { deriveLockState } from "../../domain/lock.js";
 import type {
   CreateTicketDTO,
   Lock,
+  Message,
   TicketDTO,
   TicketRef,
   TicketSummaryDTO,
@@ -408,6 +409,76 @@ export class JiraAdapter implements TrackerAdapter {
   async appendLog(ref: TicketRef, line: string): Promise<void> {
     await this.rest.addComment(ref.id, line);
   }
+
+  /**
+   * Steering messages are stored as comments with a sentinel first line so
+   * we can distinguish them from regular log/audit comments. Format:
+   *
+   *   STEERING id=msg_... at=... from=... kind=... [in_reply_to=...]
+   *   <body lines>
+   */
+  async postMessage(ref: TicketRef, message: Message): Promise<void> {
+    await this.rest.addComment(ref.id, formatSteeringComment(message));
+  }
+
+  async readMessages(ref: TicketRef, since?: string): Promise<Message[]> {
+    const { comments } = await this.rest.listComments(ref.id);
+    const out: Message[] = [];
+    for (const c of comments) {
+      const text = typeof c.body === "string" ? c.body : fromAdf(c.body);
+      const parsed = parseSteeringComment(text);
+      if (!parsed) continue;
+      out.push(parsed);
+    }
+    out.sort((a, b) => a.at.localeCompare(b.at));
+    return since ? out.filter((m) => m.at > since) : out;
+  }
+}
+
+const STEERING_PREFIX = "STEERING";
+
+function formatSteeringComment(m: Message): string {
+  const meta = [
+    `id=${escapeMeta(m.id)}`,
+    `at=${escapeMeta(m.at)}`,
+    `from=${escapeMeta(m.from)}`,
+    `kind=${escapeMeta(m.kind)}`,
+    m.in_reply_to ? `in_reply_to=${escapeMeta(m.in_reply_to)}` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  return `${STEERING_PREFIX} ${meta}\n${m.body}`;
+}
+
+function parseSteeringComment(text: string): Message | null {
+  if (!text.startsWith(`${STEERING_PREFIX} `)) return null;
+  const newline = text.indexOf("\n");
+  const head = newline === -1 ? text : text.slice(0, newline);
+  const body = newline === -1 ? "" : text.slice(newline + 1).replace(/^\n+|\n+$/g, "");
+  const meta: Record<string, string> = {};
+  for (const token of head.slice(STEERING_PREFIX.length + 1).split(/\s+/)) {
+    if (token.length === 0) continue;
+    const eq = token.indexOf("=");
+    if (eq === -1) continue;
+    meta[token.slice(0, eq)] = unescapeMeta(token.slice(eq + 1));
+  }
+  if (!meta.id || !meta.at || !meta.from) return null;
+  return {
+    id: meta.id,
+    at: meta.at,
+    from: meta.from,
+    kind: meta.kind ?? "info",
+    body,
+    in_reply_to: meta.in_reply_to ?? null,
+  };
+}
+
+function escapeMeta(value: string): string {
+  return value.replace(/[%\s=]/g, (c) => `%${c.charCodeAt(0).toString(16).padStart(2, "0")}`);
+}
+
+function unescapeMeta(value: string): string {
+  return value.replace(/%([0-9a-fA-F]{2})/g, (_, h) => String.fromCharCode(Number.parseInt(h, 16)));
 }
 
 const FENCED_RE_ALL = /\n*<!--\s*tt:([a-z_]+)\s*-->[\s\S]*?<!--\s*\/tt:\1\s*-->\n*/g;

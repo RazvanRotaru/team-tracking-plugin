@@ -59,6 +59,15 @@ Between commits:
 Audit trail (no lock required):
 - `append_log(ref, line)` — append-only. Anyone may log.
 
+### Steering channel (no lock required)
+
+Bidirectional, async, plugin-agnostic messaging on the ticket itself. Used by `team-tracking-orchestrate` to nudge specialists in flight, and by `team-tracking-execute` to ACK / answer / push back.
+
+- `post_message(ref, { from, kind?, body, in_reply_to? })` → `Message` (server mints `id` and `at`)
+- `read_messages(ref, since?)` → `Message[]` ordered by `at` ascending; `since` is an ISO-8601 timestamp filter (`at > since`).
+
+Conventional `kind` values: `nudge`, `question`, `response`, `ack`, `info`. Free-text — the server does not enforce.
+
 ## Lock state machine
 
 `lock_state` is **derived** from the lock object — not a separate field you set:

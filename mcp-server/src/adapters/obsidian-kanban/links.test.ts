@@ -104,10 +104,7 @@ describe("wiki-link integrity", () => {
     const epic = await adapter.createTicket(project, { type: "epic", title: "Onboard" });
     await adapter.createTicket(project, { type: "story", parent: epic, title: "S1" });
 
-    const board = await fs.readFile(
-      path.join(dir, "projects", project, "board.md"),
-      "utf8",
-    );
+    const board = await fs.readFile(path.join(dir, "projects", project, "board.md"), "utf8");
     const epicTicket = await fs.readFile(
       path.join(dir, "projects", project, "tickets", "onboard", "ticket.md"),
       "utf8",

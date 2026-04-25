@@ -1,5 +1,5 @@
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
-import type { Lock, Priority, TicketType } from "../../domain/types.js";
+import type { Lock, Message, Priority, TicketType } from "../../domain/types.js";
 
 export type TicketFrontmatter = {
   type: TicketType;
@@ -21,13 +21,14 @@ export type ParsedTicketFile = {
   frontmatter: TicketFrontmatter;
   body: string;
   log: string[]; // raw log lines, no trailing newline
+  messages: Message[]; // steering channel
 };
 
 const SECTION_CHILDREN = "## Children";
+const SECTION_STEERING = "## Steering";
 const SECTION_LOG = "## Log";
 
 export function parseTicketFile(text: string): ParsedTicketFile {
-  // Frontmatter must start with `---\n`.
   if (!text.startsWith("---\n")) {
     throw new Error("ticket.md missing leading frontmatter");
   }
@@ -39,42 +40,53 @@ export function parseTicketFile(text: string): ParsedTicketFile {
   const rest = text.slice(end + 5); // after `\n---\n`
   const fm = parseYaml(yamlBlock) as TicketFrontmatter;
 
-  // rest starts with optional blank line + body + optional ## Children + optional ## Log
-  // Locate ## Children and ## Log section starts on lines of their own.
+  // Locate section headers on their own line.
   const lines = rest.split("\n");
-  let childrenStart = -1;
-  let logStart = -1;
-  for (let i = 0; i < lines.length; i++) {
-    if (lines[i] === SECTION_CHILDREN && childrenStart === -1) childrenStart = i;
-    if (lines[i] === SECTION_LOG && logStart === -1) logStart = i;
-  }
+  const idx = (header: string) => lines.indexOf(header);
+  const childrenStart = idx(SECTION_CHILDREN);
+  const steeringStart = idx(SECTION_STEERING);
+  const logStart = idx(SECTION_LOG);
 
-  const bodyEnd = childrenStart !== -1 ? childrenStart : logStart !== -1 ? logStart : lines.length;
+  // Body ends at the first section header that's present.
+  const sectionStarts = [childrenStart, steeringStart, logStart]
+    .filter((i) => i !== -1)
+    .sort((a, b) => a - b);
+  const bodyEnd = sectionStarts.length > 0 ? (sectionStarts[0] ?? lines.length) : lines.length;
   let body = lines.slice(0, bodyEnd).join("\n");
   body = body.replace(/^\n+/, "").replace(/\n+$/, "");
 
+  // Each section runs until the next section header or EOF.
+  const sectionEnd = (start: number): number => {
+    if (start === -1) return -1;
+    const next = sectionStarts.find((s) => s > start);
+    return next ?? lines.length;
+  };
+
   let logLines: string[] = [];
   if (logStart !== -1) {
-    const after = lines.slice(logStart + 1);
-    logLines = after.map((l) => l.replace(/\s+$/, "")).filter((l) => l.length > 0);
+    const slice = lines.slice(logStart + 1, sectionEnd(logStart));
+    logLines = slice.map((l) => l.replace(/\s+$/, "")).filter((l) => l.length > 0);
   }
 
-  return { frontmatter: fm, body, log: logLines };
+  let messages: Message[] = [];
+  if (steeringStart !== -1) {
+    const slice = lines.slice(steeringStart + 1, sectionEnd(steeringStart)).join("\n");
+    messages = parseSteeringSection(slice);
+  }
+
+  return { frontmatter: fm, body, log: logLines, messages };
 }
 
 /**
- * Render a ticket.md given frontmatter, body, child entries, and log lines.
- *
- * Each child entry carries the absolute vault-relative wiki-link target
- * (e.g. `projects/Demo/tickets/foo/children/bar/ticket`) so the link pins
- * exactly one file regardless of how many other tickets share the same
- * `ticket.md` basename or local folder layout.
+ * Render a ticket.md given frontmatter, body, child entries, log lines, and
+ * steering messages. Children carry absolute vault-relative wiki-link targets.
  */
 export function renderTicketFile(args: {
   frontmatter: TicketFrontmatter;
   body: string;
   children: ReadonlyArray<{ linkTarget: string; slug: string; done: boolean }>;
   log: ReadonlyArray<string>;
+  messages?: ReadonlyArray<Message>;
 }): string {
   const fm = stringifyYaml(args.frontmatter, { lineWidth: 0 }).trimEnd();
   const parts = ["---", fm, "---", ""];
@@ -89,10 +101,94 @@ export function renderTicketFile(args: {
     }
     parts.push("");
   }
+  if (args.messages && args.messages.length > 0) {
+    parts.push(SECTION_STEERING, "");
+    for (const m of args.messages) {
+      parts.push(renderSteeringMessage(m));
+      parts.push("");
+    }
+  }
   if (args.log.length > 0) {
     parts.push(SECTION_LOG, "");
     for (const l of args.log) parts.push(l);
     parts.push("");
   }
   return `${parts.join("\n")}`;
+}
+
+/**
+ * Steering message wire format:
+ *
+ *   <!-- msg id=... at=... from=... kind=... in_reply_to=... -->
+ *   <body lines, may be empty or multi-line>
+ *
+ * Both human-readable (renders as a comment + paragraph in Obsidian) and
+ * machine-parseable (each marker is unique per message).
+ */
+function renderSteeringMessage(m: Message): string {
+  const meta = [
+    `id=${escapeMeta(m.id)}`,
+    `at=${escapeMeta(m.at)}`,
+    `from=${escapeMeta(m.from)}`,
+    `kind=${escapeMeta(m.kind)}`,
+    m.in_reply_to ? `in_reply_to=${escapeMeta(m.in_reply_to)}` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  return `<!-- msg ${meta} -->\n${m.body}`;
+}
+
+const META_RE = /<!--\s*msg\s+(.+?)\s*-->/g;
+
+export function parseSteeringSection(text: string): Message[] {
+  const out: Message[] = [];
+  // Find every marker. Each message body is the text between this marker
+  // and the next marker (or EOF for the last one).
+  const markers: Array<{ start: number; end: number; meta: string }> = [];
+  for (const m of text.matchAll(META_RE)) {
+    if (m.index === undefined) continue;
+    markers.push({ start: m.index, end: m.index + m[0].length, meta: m[1] ?? "" });
+  }
+  for (let i = 0; i < markers.length; i++) {
+    const marker = markers[i];
+    if (!marker) continue;
+    const next = markers[i + 1];
+    const bodyStart = marker.end;
+    const bodyEnd = next ? next.start : text.length;
+    const body = text.slice(bodyStart, bodyEnd).replace(/^\n+/, "").replace(/\n+$/, "");
+    const meta = parseMeta(marker.meta);
+    out.push({
+      id: meta.id ?? "",
+      at: meta.at ?? "",
+      from: meta.from ?? "",
+      kind: meta.kind ?? "info",
+      body,
+      in_reply_to: meta.in_reply_to ?? null,
+    });
+  }
+  return out;
+}
+
+function escapeMeta(value: string): string {
+  // Spaces and `=` are the only chars that would break the simple parser.
+  // We percent-encode them; everything else is kept readable.
+  return value.replace(/[%\s=]/g, (c) => `%${c.charCodeAt(0).toString(16).padStart(2, "0")}`);
+}
+
+function unescapeMeta(value: string): string {
+  return value.replace(/%([0-9a-fA-F]{2})/g, (_, h) => String.fromCharCode(Number.parseInt(h, 16)));
+}
+
+function parseMeta(raw: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  // Split on whitespace, then on the first `=` of each token.
+  for (const token of raw.split(/\s+/)) {
+    if (token.length === 0) continue;
+    const eq = token.indexOf("=");
+    if (eq === -1) continue;
+    const k = token.slice(0, eq);
+    const v = token.slice(eq + 1);
+    out[k] = unescapeMeta(v);
+  }
+  return out;
 }

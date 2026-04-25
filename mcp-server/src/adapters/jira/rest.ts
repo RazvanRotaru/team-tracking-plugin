@@ -99,6 +99,15 @@ export class JiraRest {
     });
   }
 
+  listComments(idOrKey: string): Promise<{
+    comments: Array<{ id: string; body: unknown; created?: string }>;
+  }> {
+    return this.request(
+      "GET",
+      `/rest/api/3/issue/${encodeURIComponent(idOrKey)}/comment?orderBy=created`,
+    );
+  }
+
   createIssueLink(args: {
     type: string; // e.g. "is parent of"
     inwardKey: string;

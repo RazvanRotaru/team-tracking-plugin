@@ -13,8 +13,8 @@
 // Idempotent only on a fresh vault. Run after the headless init.
 
 import { randomUUID } from "node:crypto";
-import { buildAdapter } from "../dist/index.js";
 import { loadConfig } from "../dist/config/loader.js";
+import { buildAdapter } from "../dist/index.js";
 
 const config = await loadConfig();
 const adapter = await buildAdapter(config);
@@ -239,6 +239,17 @@ await setStatus(peer, "Done");
 await setStatus(taskSpike, "Done");
 
 console.log("populated:");
-for (const r of [epic, storyEmail, taskSendEmail, taskLanding, storySso, taskOauth, storySettings, taskProfile, taskApi, taskSpike]) {
+for (const r of [
+  epic,
+  storyEmail,
+  taskSendEmail,
+  taskLanding,
+  storySso,
+  taskOauth,
+  storySettings,
+  taskProfile,
+  taskApi,
+  taskSpike,
+]) {
   console.log(`  ${r.project}/${r.id}`);
 }

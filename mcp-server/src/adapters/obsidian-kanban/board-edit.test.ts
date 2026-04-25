@@ -14,7 +14,9 @@ describe("board-edit", () => {
     });
     // The relevant slice should look like:
     //   ## Todo\n\n- [ ] [[...]]\n\n## In Progress
-    expect(next).toMatch(/## Todo\n\n- \[ \] \[\[tickets\/foo\/ticket\|foo\]\][^\n]*\n\n## In Progress/);
+    expect(next).toMatch(
+      /## Todo\n\n- \[ \] \[\[tickets\/foo\/ticket\|foo\]\][^\n]*\n\n## In Progress/,
+    );
   });
 
   it("inserts a blank line between the card and the kanban settings block (last column)", () => {
@@ -87,9 +89,7 @@ describe("board-edit", () => {
       priority: "P1",
       type: "epic",
       done: false,
-      children: [
-        { id: "tickets/parent/children/a", slug: "a", type: "story", status: "Todo" },
-      ],
+      children: [{ id: "tickets/parent/children/a", slug: "a", type: "story", status: "Todo" }],
     });
     board = upsertCard(board, { id: "tickets/parent", column: "Todo", cardLine: head });
     board = upsertCard(board, { id: "tickets/parent", column: "In Progress", cardLine: head });

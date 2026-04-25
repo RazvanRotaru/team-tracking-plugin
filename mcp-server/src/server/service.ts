@@ -12,6 +12,8 @@ import type {
   Checkpoint,
   CommitCheckpointDTO,
   CreateTicketDTO,
+  Message,
+  PostMessageDTO,
   ReportProgressDTO,
   TicketDTO,
   TicketRef,
@@ -24,6 +26,7 @@ export type ServiceOptions = {
   ttlSeconds: number;
   now: () => string;
   mintToken: () => string;
+  mintMessageId: () => string;
 };
 
 export type AcquireResultDTO = {
@@ -190,5 +193,34 @@ export class TicketService {
       await this.adapter.appendLog(ref, line);
       return ok(undefined);
     });
+  }
+
+  // ── steering channel ──────────────────────────────────────────────
+  // Plugin-agnostic, bidirectional async messaging on the ticket itself.
+  // Orchestrator nudges → executor reads at each checkpoint cycle → executor
+  // ACKs / replies → orchestrator reads on its next sweep. No lock required;
+  // either party may post. Per-ref mutex keeps file writes atomic.
+
+  async postMessage(ref: TicketRef, dto: PostMessageDTO): Promise<Result<Message, DomainError>> {
+    return this.mutex.withLock(ref, async () => {
+      const current = await this.adapter.getTicket(ref);
+      if (!current) return err(domainErr("ENOTFOUND", `ticket ${ref.id} not found`));
+      const message: Message = {
+        id: this.opts.mintMessageId(),
+        at: this.opts.now(),
+        from: dto.from,
+        kind: dto.kind ?? "info",
+        body: dto.body,
+        in_reply_to: dto.in_reply_to ?? null,
+      };
+      await this.adapter.postMessage(ref, message);
+      return ok(message);
+    });
+  }
+
+  async readMessages(ref: TicketRef, since?: string): Promise<Result<Message[], DomainError>> {
+    const current = await this.adapter.getTicket(ref);
+    if (!current) return err(domainErr("ENOTFOUND", `ticket ${ref.id} not found`));
+    return ok(await this.adapter.readMessages(ref, since));
   }
 }
