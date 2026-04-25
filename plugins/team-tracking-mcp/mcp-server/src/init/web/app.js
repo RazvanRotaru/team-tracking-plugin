@@ -1,5 +1,3 @@
-"use strict";
-
 // team-tracking-mcp · setup wizard
 // State machine: state.step ∈ {1,2,3}, state.adapter ∈ {"obsidian-kanban","jira"}.
 // JS owns class toggles (.active on .steps li, .screen, .adapter-form), the
@@ -108,7 +106,7 @@ async function postConfig() {
     // Server shuts down after save; keep the button disabled to make it obvious.
   } catch (e) {
     status.classList.add("error");
-    status.textContent = (e && e.message) ? e.message : String(e);
+    status.textContent = e?.message ? e.message : String(e);
     save.disabled = false;
   }
 }

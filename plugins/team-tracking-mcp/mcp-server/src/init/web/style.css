@@ -8,39 +8,35 @@
 
 :root {
   /* surfaces */
-  --paper:        #fbfaf6;     /* warm cream, the page itself */
-  --paper-deep:   #f4f1eb;     /* card-ish backgrounds, very subtle */
+  --paper: #fbfaf6; /* warm cream, the page itself */
+  --paper-deep: #f4f1eb; /* card-ish backgrounds, very subtle */
 
   /* type */
-  --ink:          #1a1814;     /* primary text */
-  --ink-2:        #4a4640;     /* secondary text */
-  --ink-3:        #8a8580;     /* hints, eyebrow, meta */
-  --ink-4:        #b8b3aa;     /* very dim, separators */
+  --ink: #1a1814; /* primary text */
+  --ink-2: #4a4640; /* secondary text */
+  --ink-3: #8a8580; /* hints, eyebrow, meta */
+  --ink-4: #b8b3aa; /* very dim, separators */
 
   /* rules */
-  --rule:         #d6d1c8;     /* hairline, default */
-  --rule-bold:    #1a1814;     /* darkened rule for active divider */
+  --rule: #d6d1c8; /* hairline, default */
+  --rule-bold: #1a1814; /* darkened rule for active divider */
 
   /* accent: deep terracotta. used sparingly */
-  --accent:       #b8401a;
-  --accent-deep:  #8a2f10;
-  --accent-tint:  #f6e9df;
+  --accent: #b8401a;
+  --accent-deep: #8a2f10;
+  --accent-tint: #f6e9df;
 
   /* status */
-  --ok:           #2f6b3d;
-  --err:          #b8401a;     /* same family as accent — coherent */
+  --ok: #2f6b3d;
+  --err: #b8401a; /* same family as accent — coherent */
 
-  --serif:
-    ui-serif, "Iowan Old Style", "Apple Garamond", Charter, Cambria,
-    "Times New Roman", Times, serif;
+  --serif: ui-serif, "Iowan Old Style", "Apple Garamond", Charter, Cambria, "Times New Roman", Times,
+    serif;
 
-  --sans:
-    -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica,
-    "Helvetica Neue", Arial, sans-serif;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, "Helvetica Neue", Arial,
+    sans-serif;
 
-  --mono:
-    ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas,
-    "DejaVu Sans Mono", monospace;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace;
 
   --tracking-cap: 0.14em;
   --tracking-cap-tight: 0.10em;
@@ -51,9 +47,14 @@
 /* ── reset ─────────────────────────────────────────────────────────── */
 *,
 *::before,
-*::after { box-sizing: border-box; }
+*::after {
+  box-sizing: border-box;
+}
 
-html, body { height: 100%; }
+html,
+body {
+  height: 100%;
+}
 html {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -126,7 +127,9 @@ h2.display--lg {
   color: var(--ink-2);
   max-width: 56ch;
 }
-.lead--narrow { max-width: 50ch; }
+.lead--narrow {
+  max-width: 50ch;
+}
 
 .kicker {
   margin: 0 0 14px;
@@ -175,7 +178,7 @@ ol.steps {
   font-size: 18px;
   line-height: 1;
   color: var(--ink-3);
-  font-feature-settings: "lnum" 1;   /* lining numerals here, contrast w body */
+  font-feature-settings: "lnum" 1; /* lining numerals here, contrast w body */
   transition: color 200ms ease;
 }
 .steps__label {
@@ -208,14 +211,22 @@ ol.steps {
 }
 
 /* ── screens ─────────────────────────────────────────────────────── */
-.screen { display: none; }
+.screen {
+  display: none;
+}
 .screen.active {
   display: block;
   animation: screen-in 380ms cubic-bezier(0.22, 0.85, 0.18, 1) both;
 }
 @keyframes screen-in {
-  from { opacity: 0; transform: translateY(8px); }
-  to   { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 /* ── inline mono token ───────────────────────────────────────────── */
@@ -237,7 +248,9 @@ ol.steps {
   margin: 32px 0 0;
   border-top: 1px solid var(--rule);
 }
-.tile-list > li { border-bottom: 1px solid var(--rule); }
+.tile-list > li {
+  border-bottom: 1px solid var(--rule);
+}
 
 .tile {
   width: 100%;
@@ -288,8 +301,7 @@ ol.steps {
   background-position: 0 100%;
   background-repeat: no-repeat;
   background-size: 0% 1px;
-  transition: background-size 280ms cubic-bezier(0.22, 0.85, 0.18, 1),
-              color 220ms ease;
+  transition: background-size 280ms cubic-bezier(0.22, 0.85, 0.18, 1), color 220ms ease;
   align-self: flex-start;
   padding-bottom: 2px;
 }
@@ -328,8 +340,13 @@ ol.steps {
 }
 
 /* ── adapter forms (screen 2) ────────────────────────────────────── */
-.adapter-form { display: none; flex-direction: column; }
-.adapter-form.active { display: flex; }
+.adapter-form {
+  display: none;
+  flex-direction: column;
+}
+.adapter-form.active {
+  display: flex;
+}
 
 .field {
   display: flex;
@@ -365,9 +382,16 @@ ol.steps {
   width: 100%;
   transition: border-color 160ms ease;
 }
-.field input::placeholder { color: var(--ink-4); }
-.field input::selection   { background: var(--accent); color: var(--paper); }
-.field input:focus        { border-bottom-color: var(--accent); }
+.field input::placeholder {
+  color: var(--ink-4);
+}
+.field input::selection {
+  background: var(--accent);
+  color: var(--paper);
+}
+.field input:focus {
+  border-bottom-color: var(--accent);
+}
 .field input:invalid:not(:placeholder-shown) {
   border-bottom-color: var(--err);
 }
@@ -379,7 +403,9 @@ ol.steps {
   padding: 12px 0;
   border-bottom: 1px solid var(--rule);
 }
-.field--inline:last-child { border-bottom: 0; }
+.field--inline:last-child {
+  border-bottom: 0;
+}
 .field--inline .field__label {
   flex: 0 0 110px;
   margin: 0;
@@ -389,7 +415,9 @@ ol.steps {
   font-size: 15px;
   padding: 4px 0;
 }
-.field--inline input:focus { background: var(--accent-tint); }
+.field--inline input:focus {
+  background: var(--accent-tint);
+}
 
 .status-grid {
   display: grid;
@@ -397,7 +425,9 @@ ol.steps {
   gap: 0 32px;
   border-top: 1px solid var(--rule);
 }
-.status-grid .field--inline { border-bottom: 1px solid var(--rule); }
+.status-grid .field--inline {
+  border-bottom: 1px solid var(--rule);
+}
 
 /* ── actions row ─────────────────────────────────────────────────── */
 .actions {
@@ -424,11 +454,7 @@ ol.steps {
   background: transparent;
   border: 1px solid var(--ink);
   cursor: pointer;
-  transition:
-    background 180ms ease,
-    color      180ms ease,
-    border-color 180ms ease,
-    transform  180ms ease;
+  transition: background 180ms ease, color 180ms ease, border-color 180ms ease, transform 180ms ease;
 }
 .btn:hover {
   background: var(--ink);
@@ -438,7 +464,9 @@ ol.steps {
   outline: 1px solid var(--accent);
   outline-offset: 3px;
 }
-.btn:active { transform: translateY(1px); }
+.btn:active {
+  transform: translateY(1px);
+}
 
 .btn--ghost {
   border-color: var(--rule);
@@ -504,7 +532,9 @@ ol.steps {
   font-size: 14px;
   color: var(--ink-2);
 }
-#status::before { display: none; }
+#status::before {
+  display: none;
+}
 
 #status.error,
 #status.success {
@@ -515,8 +545,12 @@ ol.steps {
   font-size: 15px;
   line-height: 1.5;
 }
-#status.error   { color: var(--err); }
-#status.success { color: var(--ok); }
+#status.error {
+  color: var(--err);
+}
+#status.success {
+  color: var(--ok);
+}
 
 #status.error::before {
   content: "Error — ";
@@ -547,8 +581,12 @@ ol.steps {
   font-family: var(--sans);
   letter-spacing: var(--tracking-cap-tight);
 }
-.colophon p { margin: 0; }
-.colophon p + p { margin-top: 4px; }
+.colophon p {
+  margin: 0;
+}
+.colophon p + p {
+  margin-top: 4px;
+}
 .colophon__sub {
   font-family: var(--serif);
   font-style: italic;
@@ -559,32 +597,53 @@ ol.steps {
 
 /* ── responsive ─────────────────────────────────────────────────── */
 @media (max-width: 640px) {
-  .page                     { padding: 40px 22px 64px; }
-  .masthead                 { margin-bottom: 44px; }
+  .page {
+    padding: 40px 22px 64px;
+  }
+  .masthead {
+    margin-bottom: 44px;
+  }
   .tile {
     grid-template-columns: auto 1fr;
     gap: 16px;
     padding: 22px 0;
   }
-  .tile__chevron            { display: none; }
-  .status-grid              { grid-template-columns: 1fr; }
+  .tile__chevron {
+    display: none;
+  }
+  .status-grid {
+    grid-template-columns: 1fr;
+  }
   .field--inline {
     flex-direction: column;
     align-items: stretch;
     gap: 4px;
   }
-  .field--inline .field__label { flex: 0; }
-  .actions                  { flex-direction: column-reverse; align-items: stretch; }
-  .btn                      { justify-content: center; width: 100%; }
+  .field--inline .field__label {
+    flex: 0;
+  }
+  .actions {
+    flex-direction: column-reverse;
+    align-items: stretch;
+  }
+  .btn {
+    justify-content: center;
+    width: 100%;
+  }
 }
 
 /* ── reduced motion ─────────────────────────────────────────────── */
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
+  *,
+  *::before,
+  *::after {
     animation-duration: 0.001ms !important;
     transition-duration: 0.001ms !important;
   }
 }
 
 /* ── selection ──────────────────────────────────────────────────── */
-::selection { background: var(--accent); color: var(--paper); }
+::selection {
+  background: var(--accent);
+  color: var(--paper);
+}
