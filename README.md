@@ -11,7 +11,10 @@ See [`DESIGN.md`](DESIGN.md) for the full design and [`examples/`](examples/) fo
 - **MCP server** exposing ten tools: `list_board`, `get_ticket`, `list_children`, `create_ticket`, `update_ticket`, `acquire_ticket`, `commit_checkpoint`, `release_ticket`, `report_progress`, `append_log`.
 - **Two adapters today**: Obsidian Kanban (file-backed, local vault) and Jira (cloud, with custom-field or fenced-section storage).
 - **Slash commands**: `/team-tracking:init`, `/team-tracking:status`, `/team-tracking:reconfigure`.
-- **`team-tracking-usage` skill** that teaches the orchestrator how to drive the acquire → checkpoint → release protocol and the harness-task-team pipeline subtask norm.
+- **Three skills** that teach Claude how to use the system:
+  - [`team-tracking-orchestrate`](skills/team-tracking-orchestrate/SKILL.md) — for the planner: read the board, decompose, pick priorities, consult the architect, dispatch.
+  - [`team-tracking-execute`](skills/team-tracking-execute/SKILL.md) — for specialist subagents: acquire → checkpoint → release, plus how to escalate when a subtask is too complex.
+  - [`team-tracking-usage`](skills/team-tracking-usage/SKILL.md) — tool reference (the ten tools, lock state machine, typed errors).
 
 ## Install
 

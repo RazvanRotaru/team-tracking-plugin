@@ -9,5 +9,9 @@
     }
   },
   "commands": ["commands/init.md", "commands/status.md", "commands/reconfigure.md"],
-  "skills": ["skills/team-tracking-usage/SKILL.md"]
+  "skills": [
+    "skills/team-tracking-usage/SKILL.md",
+    "skills/team-tracking-orchestrate/SKILL.md",
+    "skills/team-tracking-execute/SKILL.md"
+  ]
 }
