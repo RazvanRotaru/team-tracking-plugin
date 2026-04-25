@@ -11,6 +11,7 @@ import type {
 import type { AdapterConfig, TrackerAdapter } from "../types.js";
 import {
   BOARD_COLUMNS,
+  type CardChild,
   formatCard,
   initialBoardText,
   listBoardCards,
@@ -260,8 +261,10 @@ export class ObsidianKanbanAdapter implements TrackerAdapter {
       // Top-level: add card to board.
       await this.placeBoardCard(ref, fm.status, fm.priority, draft.type, slug);
     } else {
-      // Nested: refresh parent's Children section so the new child is listed.
+      // Nested: refresh parent's Children section, then refresh the
+      // top-level ancestor's board card so its child summary stays current.
       await this.refreshParentChildren(parentRef);
+      await this.refreshTopLevelBoardCard(parentRef);
     }
 
     return ref;
@@ -277,15 +280,63 @@ export class ObsidianKanbanAdapter implements TrackerAdapter {
     const boardPath = this.boardFile(ref.project);
     const boardText = (await readFileIfExists(boardPath)) ?? initialBoardText();
     if (!BOARD_COLUMNS.includes(status)) return;
+    const children = await this.collectImmediateChildSummaries(ref);
     const cardLine = formatCard({
       id: ref.id,
       slug,
       priority,
       type,
       done: status === "Done",
+      children,
     });
     const next = upsertCard(boardText, { id: ref.id, column: status, cardLine });
     await writeFileAtomic(boardPath, next);
+  }
+
+  private async collectImmediateChildSummaries(ref: TicketRef): Promise<CardChild[]> {
+    const childRefs = await this.childRefs(ref);
+    const out: CardChild[] = [];
+    for (const c of childRefs) {
+      const p = await this.loadParsed(c);
+      if (!p) continue;
+      out.push({
+        id: c.id,
+        slug: path.basename(c.id),
+        type: p.frontmatter.type,
+        status: p.frontmatter.status,
+      });
+    }
+    return out;
+  }
+
+  /**
+   * Walk up the parent chain to find the top-level ancestor (parent === null)
+   * and re-render its board card. Used after any mutation to a nested ticket
+   * so the ancestor card's child summary stays in sync.
+   */
+  private async refreshTopLevelBoardCard(start: TicketRef): Promise<void> {
+    let cur: TicketRef | null = start;
+    let topLevel: TicketRef | null = null;
+    let topParsed: ParsedTicketFile | null = null;
+    while (cur) {
+      const parsed = await this.loadParsed(cur);
+      if (!parsed) return;
+      if (parsed.frontmatter.parent === null) {
+        topLevel = cur;
+        topParsed = parsed;
+        break;
+      }
+      cur = { project: cur.project, id: parsed.frontmatter.parent };
+    }
+    if (!topLevel || !topParsed) return;
+    const slug = path.basename(topLevel.id);
+    await this.placeBoardCard(
+      topLevel,
+      topParsed.frontmatter.status,
+      topParsed.frontmatter.priority,
+      topParsed.frontmatter.type,
+      slug,
+    );
   }
 
   private async refreshParentChildren(parentRef: TicketRef): Promise<void> {
@@ -313,7 +364,6 @@ export class ObsidianKanbanAdapter implements TrackerAdapter {
   async updateTicket(ref: TicketRef, update: UpdateDTO): Promise<void> {
     const parsed = await this.loadParsed(ref);
     if (!parsed) throw new Error(`ticket not found: ${ref.id}`);
-    const oldStatus = parsed.frontmatter.status;
 
     let nextBody = parsed.body;
     if (update.title !== undefined) {
@@ -353,15 +403,15 @@ export class ObsidianKanbanAdapter implements TrackerAdapter {
     const text = renderTicketFile({ frontmatter: fm, body: nextBody, children, log: parsed.log });
     await writeFileAtomic(this.ticketFile(ref), text);
 
-    // If top-level and status / priority / title changed, refresh card.
     if (fm.parent === null) {
+      // Top-level: re-render its own card (status / priority / title / child
+      // summary may all have changed).
       const slug = path.basename(ref.id);
       await this.placeBoardCard(ref, fm.status, fm.priority, fm.type, slug);
-      // If status moved out of board territory (e.g. -> done is fine, it's still on board),
-      // we keep the card. Since BOARD_COLUMNS contains all 5 statuses, the card always lands.
-      if (oldStatus !== fm.status) {
-        // The upsert moves it to the new column.
-      }
+    } else {
+      // Nested: any change to status/title can affect the ancestor card's
+      // sub-bullet rendering. Walk up and refresh.
+      await this.refreshTopLevelBoardCard(ref);
     }
   }
 

@@ -1,11 +1,24 @@
-// One-off: populate the Demo project with a small example so the board
-// renders something interesting in Obsidian. Idempotent only on a fresh vault.
+// Populate the Demo project with a richer example covering:
+//   - epic with stories (and tasks/subtasks nested below)
+//   - top-level story with tasks
+//   - top-level task with subtasks
+//   - an in-progress task showing live progress fields and a recorded
+//     checkpoint (lock_state: "committed")
+//
+// Idempotent only on a fresh vault. Run after the headless init.
+
+import { randomUUID } from "node:crypto";
 import { buildAdapter } from "../dist/index.js";
 import { loadConfig } from "../dist/config/loader.js";
 
 const config = await loadConfig();
 const adapter = await buildAdapter(config);
 const project = config.projects[0].name;
+
+// ────────────────────────────────────────────────────────────────────
+// 1. Top-level epic with two stories. Each story has a task; one task
+//    has subtasks. The board card for the epic surfaces the stories.
+// ────────────────────────────────────────────────────────────────────
 
 const epic = await adapter.createTicket(project, {
   type: "epic",
@@ -15,48 +28,137 @@ const epic = await adapter.createTicket(project, {
 });
 await adapter.updateTicket(epic, { status: "In Progress" });
 
-const story = await adapter.createTicket(project, {
+const storyEmail = await adapter.createTicket(project, {
   type: "story",
   parent: epic,
   title: "Email verification",
   priority: "P0",
 });
-await adapter.updateTicket(story, { status: "Todo" });
+await adapter.updateTicket(storyEmail, { status: "In Progress" });
 
-const sub1 = await adapter.createTicket(project, {
-  type: "subtask",
-  parent: story,
+const taskSendEmail = await adapter.createTicket(project, {
+  type: "task",
+  parent: storyEmail,
   title: "Send verification email",
   priority: "P0",
 });
+await adapter.updateTicket(taskSendEmail, { status: "In Progress" });
 
-const sub2 = await adapter.createTicket(project, {
+await adapter.createTicket(project, {
   type: "subtask",
-  parent: story,
-  title: "Click-through landing page",
+  parent: taskSendEmail,
+  title: "Render templates",
+  priority: "P1",
+});
+await adapter.createTicket(project, {
+  type: "subtask",
+  parent: taskSendEmail,
+  title: "Wire SMTP queue",
   priority: "P1",
 });
 
-const standalone = await adapter.createTicket(project, {
+const storySso = await adapter.createTicket(project, {
+  type: "story",
+  parent: epic,
+  title: "Google SSO",
+  priority: "P1",
+});
+await adapter.updateTicket(storySso, { status: "Todo" });
+
+// ────────────────────────────────────────────────────────────────────
+// 2. Top-level story with two tasks. The story's card surfaces the
+//    tasks as sub-bullets.
+// ────────────────────────────────────────────────────────────────────
+
+const settingsStory = await adapter.createTicket(project, {
+  type: "story",
+  title: "Settings page",
+  priority: "P1",
+});
+await adapter.updateTicket(settingsStory, { status: "Todo" });
+
+await adapter.createTicket(project, {
+  type: "task",
+  parent: settingsStory,
+  title: "Profile fields",
+  priority: "P1",
+});
+await adapter.createTicket(project, {
+  type: "task",
+  parent: settingsStory,
+  title: "Notification toggles",
+  priority: "P2",
+});
+
+// ────────────────────────────────────────────────────────────────────
+// 3. Top-level task with two subtasks. The task's card surfaces the
+//    subtasks.
+// ────────────────────────────────────────────────────────────────────
+
+const reviewerTask = await adapter.createTicket(project, {
   type: "task",
   title: "Pick a copy reviewer",
   priority: "P2",
 });
-await adapter.updateTicket(standalone, { status: "Backlog" });
+// Leaves at default Backlog.
 
-const done = await adapter.createTicket(project, {
+await adapter.createTicket(project, {
+  type: "subtask",
+  parent: reviewerTask,
+  title: "Write the brief",
+  priority: "P2",
+});
+await adapter.createTicket(project, {
+  type: "subtask",
+  parent: reviewerTask,
+  title: "Send to ops",
+  priority: "P2",
+});
+
+// ────────────────────────────────────────────────────────────────────
+// 4. In-progress top-level task with a live lock + checkpoint, so the
+//    card shows lock_state: "committed" and the visible progress fields
+//    are populated.
+// ────────────────────────────────────────────────────────────────────
+
+const apiTask = await adapter.createTicket(project, {
+  type: "task",
+  title: "Refresh API schemas",
+  priority: "P0",
+});
+await adapter.updateTicket(apiTask, {
+  status: "In Progress",
+  branch: "feat/refresh-schemas",
+});
+await adapter.writeProgress(apiTask, {
+  update: "regenerating openapi.yaml",
+  progress_summary: "v3 spec drafted; examples need backfill",
+});
+// Simulate a specialist that has already committed once.
+await adapter.writeLock(apiTask, {
+  owner: "schema-bot@subagent-42",
+  token: `tok_${randomUUID()}`,
+  acquired_at: new Date(Date.now() - 60_000).toISOString(),
+  last_checkpoint: {
+    commit_id: "a1b2c3d",
+    update: "regenerating openapi.yaml",
+    progress_summary: "v3 spec drafted; examples need backfill",
+    at: new Date().toISOString(),
+  },
+});
+
+// ────────────────────────────────────────────────────────────────────
+// 5. A done task, just to populate the rightmost column.
+// ────────────────────────────────────────────────────────────────────
+
+const doneTask = await adapter.createTicket(project, {
   type: "task",
   title: "Spike: shortlist email providers",
   priority: "P2",
 });
-await adapter.updateTicket(done, { status: "Done" });
+await adapter.updateTicket(doneTask, { status: "Done" });
 
-await adapter.writeProgress(sub1, {
-  update: "drafting templates",
-  progress_summary: "two variants in review",
-});
-
-console.log("created tickets:");
-for (const r of [epic, story, sub1, sub2, standalone, done]) {
+console.log("populated:");
+for (const r of [epic, storyEmail, taskSendEmail, storySso, settingsStory, reviewerTask, apiTask, doneTask]) {
   console.log(`  ${r.project}/${r.id}`);
 }
