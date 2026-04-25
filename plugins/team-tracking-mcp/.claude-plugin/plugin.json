@@ -1,17 +1,17 @@
 {
+  "$schema": "https://docs.claude.com/schemas/claude-plugin.json",
   "name": "team-tracking-mcp",
   "version": "0.0.1",
-  "description": "Tracker-backed orchestration for multi-agent Claude Code runs (Jira / Obsidian Kanban)",
+  "description": "Tracker-backed orchestration for multi-agent Claude Code runs (Jira / Obsidian Kanban).",
+  "author": {
+    "name": "Razvan Rotaru"
+  },
+  "homepage": "https://github.com/RazvanRotaru/team-tracking-plugin",
+  "license": "MIT",
   "mcpServers": {
     "team-tracking": {
       "command": "node",
-      "args": ["${PLUGIN_DIR}/mcp-server/dist/index.js"]
+      "args": ["${CLAUDE_PLUGIN_ROOT}/mcp-server/dist/index.js"]
     }
-  },
-  "commands": ["commands/init.md", "commands/status.md", "commands/reconfigure.md"],
-  "skills": [
-    "skills/team-tracking-usage/SKILL.md",
-    "skills/team-tracking-orchestrate/SKILL.md",
-    "skills/team-tracking-execute/SKILL.md"
-  ]
+  }
 }

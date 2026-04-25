@@ -7,18 +7,18 @@ Run the team-tracking-mcp init flow. Spawns a local HTTP server, opens a browser
 If the project is a git repo, `.team-tracking/` is appended to `.gitignore` automatically.
 
 ```bash
-node "${CLAUDE_PLUGIN_DIR}/mcp-server/dist/init/cli.js"
+node "${CLAUDE_PLUGIN_ROOT}/mcp-server/dist/init/cli.js"
 ```
 
 To run headlessly (CI / scripts) instead, pass adapter args:
 
 ```bash
 # Obsidian
-node "${CLAUDE_PLUGIN_DIR}/mcp-server/dist/init/cli.js" \
+node "${CLAUDE_PLUGIN_ROOT}/mcp-server/dist/init/cli.js" \
   --adapter obsidian-kanban --vault ./vault --project Autopilot
 
 # Jira
-node "${CLAUDE_PLUGIN_DIR}/mcp-server/dist/init/cli.js" \
+node "${CLAUDE_PLUGIN_ROOT}/mcp-server/dist/init/cli.js" \
   --adapter jira \
   --jira-base-url https://acme.atlassian.net \
   --jira-email you@acme.com --jira-api-token "$JIRA_API_TOKEN" \
