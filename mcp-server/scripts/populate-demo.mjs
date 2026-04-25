@@ -1,9 +1,14 @@
-// Populate the Demo project with a richer example covering:
-//   - epic with stories (and tasks/subtasks nested below)
-//   - top-level story with tasks
-//   - top-level task with subtasks
-//   - an in-progress task showing live progress fields and a recorded
-//     checkpoint (lock_state: "committed")
+// Populate the Demo project with the structure a real harness-orchestrate
+// run produces. Every task is decomposed into pipeline subtasks; the
+// orchestrator picks which stages apply per task. The lock + checkpoint
+// belong to the active implementation subtask, not to the task itself.
+//
+// What the demo surfaces:
+//   - Epic with story → task → pipeline subtasks (full TDD pipeline)
+//   - Story with task → pipeline subtasks (no-TDD variant)
+//   - Top-level task with multiple code reviewers (orchestrator-decided)
+//   - In-progress implementation subtask carrying a recorded checkpoint
+//   - A Done task with all subtasks complete
 //
 // Idempotent only on a fresh vault. Run after the headless init.
 
@@ -15,153 +20,225 @@ const config = await loadConfig();
 const adapter = await buildAdapter(config);
 const project = config.projects[0].name;
 
-// ────────────────────────────────────────────────────────────────────
-// 1. Top-level epic with two stories. Each story has a task; one task
-//    has subtasks. The board card for the epic surfaces the stories.
-// ────────────────────────────────────────────────────────────────────
+// Helpers ────────────────────────────────────────────────────────────
+const createT = (draft) => adapter.createTicket(project, draft);
+const setStatus = (ref, status) => adapter.updateTicket(ref, { status });
+const setBranch = (ref, branch) => adapter.updateTicket(ref, { branch });
 
-const epic = await adapter.createTicket(project, {
+async function fullPipeline(taskRef, prefix = "") {
+  // Standard 5-stage pipeline. Defaults: all Todo. Caller drives statuses.
+  const tests = await createT({
+    type: "subtask",
+    parent: taskRef,
+    title: `${prefix}Write integration tests`,
+    priority: "P1",
+  });
+  const testReview = await createT({
+    type: "subtask",
+    parent: taskRef,
+    title: `${prefix}Adversarial test review`,
+    priority: "P1",
+  });
+  const impl = await createT({
+    type: "subtask",
+    parent: taskRef,
+    title: `${prefix}Implement`,
+    priority: "P0",
+  });
+  const specReview = await createT({
+    type: "subtask",
+    parent: taskRef,
+    title: `${prefix}Spec compliance review`,
+    priority: "P1",
+  });
+  const codeReview = await createT({
+    type: "subtask",
+    parent: taskRef,
+    title: `${prefix}Adversarial code review`,
+    priority: "P1",
+  });
+  return { tests, testReview, impl, specReview, codeReview };
+}
+
+async function minimalPipeline(taskRef) {
+  // Orchestrator chose: skip TDD, just implement + one review.
+  const impl = await createT({
+    type: "subtask",
+    parent: taskRef,
+    title: "Implement",
+    priority: "P0",
+  });
+  const codeReview = await createT({
+    type: "subtask",
+    parent: taskRef,
+    title: "Adversarial code review",
+    priority: "P1",
+  });
+  return { impl, codeReview };
+}
+
+// 1. Epic with two stories ────────────────────────────────────────────
+
+const epic = await createT({
   type: "epic",
   title: "Onboarding flow",
-  body: "Top-level container for the new-user onboarding work.",
+  body:
+    "Multi-slice initiative: get a new user from signup to a usable account.\n" +
+    "Decomposed into stories per onboarding step.",
   priority: "P1",
 });
-await adapter.updateTicket(epic, { status: "In Progress" });
+await setStatus(epic, "In Progress");
 
-const storyEmail = await adapter.createTicket(project, {
+const storyEmail = await createT({
   type: "story",
   parent: epic,
   title: "Email verification",
   priority: "P0",
 });
-await adapter.updateTicket(storyEmail, { status: "In Progress" });
+await setStatus(storyEmail, "In Progress");
 
-const taskSendEmail = await adapter.createTicket(project, {
+// First task under the email story: full pipeline, mid-implementation.
+const taskSendEmail = await createT({
   type: "task",
   parent: storyEmail,
   title: "Send verification email",
   priority: "P0",
 });
-await adapter.updateTicket(taskSendEmail, { status: "In Progress" });
+await setStatus(taskSendEmail, "In Progress");
+await setBranch(taskSendEmail, "feat/send-verification");
+const sendStages = await fullPipeline(taskSendEmail);
+await setStatus(sendStages.tests, "Done");
+await setStatus(sendStages.testReview, "Done");
+await setStatus(sendStages.impl, "In Progress");
+await adapter.writeProgress(sendStages.impl, {
+  update: "wiring SMTP provider",
+  progress_summary: "queue config done; need retry policy",
+});
+await adapter.writeLock(sendStages.impl, {
+  owner: "implementer@subagent-7",
+  token: `tok_${randomUUID()}`,
+  acquired_at: new Date(Date.now() - 4 * 60_000).toISOString(),
+  last_checkpoint: {
+    commit_id: "9d2f1ab",
+    update: "happy path through SMTP queue",
+    progress_summary: "config + 4 tests green; retry policy outstanding",
+    at: new Date(Date.now() - 60_000).toISOString(),
+  },
+});
+// (specReview + codeReview remain Todo — implementer hasn't handed off yet.)
 
-await adapter.createTicket(project, {
-  type: "subtask",
-  parent: taskSendEmail,
-  title: "Render templates",
+// Second task under the email story: orchestrator skipped TDD here.
+const taskLanding = await createT({
+  type: "task",
+  parent: storyEmail,
+  title: "Click-through landing page",
   priority: "P1",
 });
-await adapter.createTicket(project, {
-  type: "subtask",
-  parent: taskSendEmail,
-  title: "Wire SMTP queue",
-  priority: "P1",
-});
+await minimalPipeline(taskLanding);
 
-const storySso = await adapter.createTicket(project, {
+// Second story under the epic.
+const storySso = await createT({
   type: "story",
   parent: epic,
   title: "Google SSO",
   priority: "P1",
 });
-await adapter.updateTicket(storySso, { status: "Todo" });
+await setStatus(storySso, "Todo");
 
-// ────────────────────────────────────────────────────────────────────
-// 2. Top-level story with two tasks. The story's card surfaces the
-//    tasks as sub-bullets.
-// ────────────────────────────────────────────────────────────────────
+// Task under SSO: full pipeline, plus an extra reviewer.
+const taskOauth = await createT({
+  type: "task",
+  parent: storySso,
+  title: "OAuth flow",
+  priority: "P0",
+});
+const oauthStages = await fullPipeline(taskOauth);
+await createT({
+  type: "subtask",
+  parent: taskOauth,
+  title: "Adversarial code review (security focus)",
+  priority: "P0",
+});
+void oauthStages;
 
-const settingsStory = await adapter.createTicket(project, {
+// 2. Top-level story (no parent epic) with one task ───────────────────
+
+const storySettings = await createT({
   type: "story",
   title: "Settings page",
   priority: "P1",
 });
-await adapter.updateTicket(settingsStory, { status: "Todo" });
+await setStatus(storySettings, "Todo");
 
-await adapter.createTicket(project, {
+const taskProfile = await createT({
   type: "task",
-  parent: settingsStory,
+  parent: storySettings,
   title: "Profile fields",
   priority: "P1",
 });
-await adapter.createTicket(project, {
-  type: "task",
-  parent: settingsStory,
-  title: "Notification toggles",
-  priority: "P2",
-});
+await fullPipeline(taskProfile);
 
-// ────────────────────────────────────────────────────────────────────
-// 3. Top-level task with two subtasks. The task's card surfaces the
-//    subtasks.
-// ────────────────────────────────────────────────────────────────────
+// 3. Top-level task with the active checkpoint ────────────────────────
 
-const reviewerTask = await adapter.createTicket(project, {
-  type: "task",
-  title: "Pick a copy reviewer",
-  priority: "P2",
-});
-// Leaves at default Backlog.
-
-const briefSub = await adapter.createTicket(project, {
-  type: "subtask",
-  parent: reviewerTask,
-  title: "Write the brief",
-  priority: "P2",
-});
-await adapter.createTicket(project, {
-  type: "subtask",
-  parent: reviewerTask,
-  title: "Send to ops",
-  priority: "P2",
-});
-// Mark one subtask Done to show the [x] tick propagating into the parent
-// task's Children section AND into the parent's card sub-bullet.
-await adapter.updateTicket(briefSub, { status: "Done" });
-
-// ────────────────────────────────────────────────────────────────────
-// 4. In-progress top-level task with a live lock + checkpoint, so the
-//    card shows lock_state: "committed" and the visible progress fields
-//    are populated.
-// ────────────────────────────────────────────────────────────────────
-
-const apiTask = await adapter.createTicket(project, {
+const taskApi = await createT({
   type: "task",
   title: "Refresh API schemas",
   priority: "P0",
 });
-await adapter.updateTicket(apiTask, {
-  status: "In Progress",
-  branch: "feat/refresh-schemas",
-});
-await adapter.writeProgress(apiTask, {
+await setStatus(taskApi, "In Progress");
+await setBranch(taskApi, "feat/refresh-schemas");
+
+const apiStages = await fullPipeline(taskApi);
+await setStatus(apiStages.tests, "Done");
+await setStatus(apiStages.testReview, "Done");
+await setStatus(apiStages.impl, "In Progress");
+await adapter.writeProgress(apiStages.impl, {
   update: "regenerating openapi.yaml",
   progress_summary: "v3 spec drafted; examples need backfill",
 });
-// Simulate a specialist that has already committed once.
-await adapter.writeLock(apiTask, {
+await adapter.writeLock(apiStages.impl, {
   owner: "schema-bot@subagent-42",
   token: `tok_${randomUUID()}`,
-  acquired_at: new Date(Date.now() - 60_000).toISOString(),
+  acquired_at: new Date(Date.now() - 8 * 60_000).toISOString(),
   last_checkpoint: {
     commit_id: "a1b2c3d",
-    update: "regenerating openapi.yaml",
-    progress_summary: "v3 spec drafted; examples need backfill",
-    at: new Date().toISOString(),
+    update: "regenerated openapi.yaml from contract types",
+    progress_summary: "spec rebuilt; 12 endpoints covered, examples pending",
+    at: new Date(Date.now() - 90_000).toISOString(),
   },
 });
 
-// ────────────────────────────────────────────────────────────────────
-// 5. A done task, just to populate the rightmost column.
-// ────────────────────────────────────────────────────────────────────
+// 4. A Done task — every pipeline subtask Done ────────────────────────
 
-const doneTask = await adapter.createTicket(project, {
+const taskSpike = await createT({
   type: "task",
   title: "Spike: shortlist email providers",
   priority: "P2",
 });
-await adapter.updateTicket(doneTask, { status: "Done" });
+const investigate = await createT({
+  type: "subtask",
+  parent: taskSpike,
+  title: "Investigate provider options",
+  priority: "P2",
+});
+const findings = await createT({
+  type: "subtask",
+  parent: taskSpike,
+  title: "Write findings doc",
+  priority: "P2",
+});
+const peer = await createT({
+  type: "subtask",
+  parent: taskSpike,
+  title: "Peer review",
+  priority: "P2",
+});
+await setStatus(investigate, "Done");
+await setStatus(findings, "Done");
+await setStatus(peer, "Done");
+await setStatus(taskSpike, "Done");
 
 console.log("populated:");
-for (const r of [epic, storyEmail, taskSendEmail, storySso, settingsStory, reviewerTask, apiTask, doneTask]) {
+for (const r of [epic, storyEmail, taskSendEmail, taskLanding, storySso, taskOauth, storySettings, taskProfile, taskApi, taskSpike]) {
   console.log(`  ${r.project}/${r.id}`);
 }

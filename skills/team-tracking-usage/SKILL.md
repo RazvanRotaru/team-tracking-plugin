@@ -92,3 +92,29 @@ Tool calls return `{ isError: true, content: [{ text: "EXXX: <message>" }] }` fo
 - `lock_state` is derived: `free` (no lock), `in_progress` (lock held, no checkpoint), `committed` (lock held with at least one checkpoint). It is orthogonal to `status`.
 - The orchestrator should write `branch` and `pr_url` on the ticket as soon as either is created — they are the link between board state and code state.
 - `scope` is free-text (e.g. `"auth module"`). The orchestrator reads it to detect potential conflict between concurrent specialists; the server does not pattern-match.
+
+## Task decomposition norm (harness-orchestrate / harness-task-team)
+
+**A task must always be decomposed into subtasks before it's handed off.** The orchestrator owns the task's structure; specialists own subtasks. A bare task with no subtasks is incomplete planning.
+
+Each subtask represents one stage of the harness-task-team pipeline. The orchestrator picks which stages apply to a given task; a small change might be `implement → code-review`, a load-bearing change `write-tests → adversarial-test-review → implement → spec-compliance-review → adversarial-code-review` (with a second adversarial reviewer if the surface warrants it).
+
+| Stage | Required? | What the subtask represents |
+|---|---|---|
+| `Write tests` | Optional (TDD opt-in) | Failing tests authored by a test-writer subagent |
+| `Adversarial test review` | Optional (only meaningful with tests) | Tests attacked for gaps before implementation starts |
+| `Implement` | **Required** | The implementer subagent's actual code change |
+| `Spec compliance review` | Optional | Spec-reviewer subagent verifies the impl matches the spec |
+| `Adversarial code review` | **Required** (≥1) | Reviewer attacks impl for bugs / missing cases. Multiple reviewers allowed (e.g. security + architecture). |
+
+### Lock placement
+
+Locks belong on the **specific subtask a specialist is currently executing**, never on the parent task. The implementer holds the lock while implementing; reviewers acquire fresh locks on review subtasks. A task's `status` is the orchestrator's aggregate view of its subtasks — it isn't itself locked.
+
+### Sequencing
+
+Stages are ordered. The orchestrator should not dispatch a downstream stage until the upstream stage's subtask is `Done`. Example: don't dispatch the implementer until `Adversarial test review` is `Done` (when TDD applies). Adversarial review failure → loop back to the upstream stage's subtask (re-dispatch test writer or implementer).
+
+### Retry semantics inside a pipeline
+
+If an adversarial review surfaces gaps, the upstream subtask's status flips back from `Done` to `In Progress` (or `Blocked`) and is re-dispatched. The lock+checkpoint flow is unchanged — a fresh acquire on the upstream subtask gets a new token; previous checkpoints on it still surface as `recovered_checkpoint` if the prior session was abandoned.
