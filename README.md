@@ -18,7 +18,14 @@ See [`examples/`](examples/) for a browseable snapshot of an orchestrator-driven
 
 ## Install
 
-Requires Node 20+ and pnpm 10+.
+Requires Node 20+ and pnpm 10+. The cleanest way to get pnpm on a fresh machine is corepack (ships with Node, no sudo):
+
+```bash
+corepack enable
+corepack prepare pnpm@latest --activate
+```
+
+Then clone and build:
 
 ```bash
 git clone https://github.com/RazvanRotaru/team-tracking-plugin.git
@@ -27,13 +34,16 @@ pnpm install
 pnpm build
 ```
 
-Register the plugin from inside a Claude Code session:
+`pnpm build` must complete before installing into Claude Code — `plugin.json` points the MCP server at `mcp-server/dist/index.js`, which doesn't exist until you build.
+
+Register with Claude Code using its marketplace flow (`/plugin install` takes a *plugin@marketplace* identifier, not a path). The repo carries its own marketplace manifest, so:
 
 ```
-/plugin install /absolute/path/to/team-tracking-plugin
+/plugin marketplace add /absolute/path/to/team-tracking-plugin
+/plugin install team-tracking-mcp@team-tracking-plugin
 ```
 
-(Path-based install from the local checkout. `pnpm build` must have produced `mcp-server/dist/` first — `plugin.json` points the MCP server at `mcp-server/dist/index.js`.)
+The first command registers the local checkout as a marketplace named `team-tracking-plugin`; the second installs the `team-tracking-mcp` plugin from it. Updating later: `git pull && pnpm build && /plugin marketplace update team-tracking-plugin`.
 
 ## Configure
 

@@ -1,0 +1,15 @@
+{
+  "$schema": "https://docs.claude.com/schemas/claude-plugin-marketplace.json",
+  "name": "team-tracking-plugin",
+  "description": "Tracker-backed orchestration for multi-agent Claude Code runs (Jira / Obsidian Kanban).",
+  "owner": {
+    "name": "Razvan Rotaru"
+  },
+  "plugins": [
+    {
+      "name": "team-tracking-mcp",
+      "source": ".",
+      "description": "MCP server + adapters (Obsidian Kanban, Jira), three skills (orchestrate, execute, usage), and three slash commands."
+    }
+  ]
+}
