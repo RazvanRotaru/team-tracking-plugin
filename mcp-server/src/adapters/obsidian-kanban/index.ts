@@ -75,6 +75,29 @@ export class ObsidianKanbanAdapter implements TrackerAdapter {
     return path.join(this.projectDir(project), "board.md");
   }
 
+  /**
+   * Vault-relative path prefix for a ticket (no `/ticket` suffix). This is
+   * the canonical, globally-unique key we put in wiki-links. Pinning links
+   * to the absolute path avoids Obsidian's suffix-match resolution picking
+   * the wrong `ticket.md` in vaults with multiple projects or sibling
+   * children that share a slug.
+   */
+  private linkPrefix(ref: TicketRef): string {
+    return `projects/${ref.project}/${ref.id}`;
+  }
+
+  /** `${linkPrefix(ref)}/ticket` — the literal target stored in `[[...]]`. */
+  private linkTarget(ref: TicketRef): string {
+    return `${this.linkPrefix(ref)}/ticket`;
+  }
+
+  /** Derive a TicketRef from a card's link prefix. Returns null on mismatch. */
+  private refFromLinkPrefix(project: string, prefix: string): TicketRef | null {
+    const expected = `projects/${project}/`;
+    if (!prefix.startsWith(expected)) return null;
+    return { project, id: prefix.slice(expected.length) };
+  }
+
   private parentRefFromIdAndProject(
     project: string,
     parentPathId: string | null,
@@ -111,6 +134,29 @@ export class ObsidianKanbanAdapter implements TrackerAdapter {
     return slugs
       .filter((s) => !s.startsWith("."))
       .map((s) => ({ project: ref.project, id: `${ref.id}/children/${s}` }));
+  }
+
+  /**
+   * Collect immediate children of `ref` as the entries fed to
+   * `renderTicketFile`'s Children section. Each entry carries a fully
+   * qualified vault-relative link target so wiki-links never resolve to
+   * the wrong file.
+   */
+  private async collectChildEntries(
+    ref: TicketRef,
+  ): Promise<Array<{ linkTarget: string; slug: string; done: boolean }>> {
+    const childRefs = await this.childRefs(ref);
+    const out: Array<{ linkTarget: string; slug: string; done: boolean }> = [];
+    for (const c of childRefs) {
+      const p = await this.loadParsed(c);
+      if (!p) continue;
+      out.push({
+        linkTarget: this.linkTarget(c),
+        slug: path.basename(c.id),
+        done: p.frontmatter.status === "Done",
+      });
+    }
+    return out;
   }
 
   private toDTO(ref: TicketRef, parsed: ParsedTicketFile, children: TicketRef[]): TicketDTO {
@@ -173,7 +219,8 @@ export class ObsidianKanbanAdapter implements TrackerAdapter {
 
     const summaries: TicketSummaryDTO[] = [];
     for (const card of cards) {
-      const ref: TicketRef = { project, id: card.id };
+      const ref = this.refFromLinkPrefix(project, card.id);
+      if (!ref) continue;
       const parsed = await this.loadParsed(ref);
       if (!parsed) continue;
       const fm = parsed.frontmatter;
@@ -251,7 +298,7 @@ export class ObsidianKanbanAdapter implements TrackerAdapter {
     const text = renderTicketFile({
       frontmatter: fm,
       body: bodyText,
-      children: [],
+      children: [], // brand new — no children yet
       log: [],
     });
     await ensureDir(this.ticketDir(ref));
@@ -281,15 +328,20 @@ export class ObsidianKanbanAdapter implements TrackerAdapter {
     const boardText = (await readFileIfExists(boardPath)) ?? initialBoardText();
     if (!BOARD_COLUMNS.includes(status)) return;
     const children = await this.collectImmediateChildSummaries(ref);
+    const cardLinkPrefix = this.linkPrefix(ref);
     const cardLine = formatCard({
-      id: ref.id,
+      id: cardLinkPrefix,
       slug,
       priority,
       type,
       done: status === "Done",
       children,
     });
-    const next = upsertCard(boardText, { id: ref.id, column: status, cardLine });
+    const next = upsertCard(boardText, {
+      id: cardLinkPrefix,
+      column: status,
+      cardLine,
+    });
     await writeFileAtomic(boardPath, next);
   }
 
@@ -300,7 +352,7 @@ export class ObsidianKanbanAdapter implements TrackerAdapter {
       const p = await this.loadParsed(c);
       if (!p) continue;
       out.push({
-        id: c.id,
+        id: this.linkPrefix(c),
         slug: path.basename(c.id),
         type: p.frontmatter.type,
         status: p.frontmatter.status,
@@ -342,18 +394,10 @@ export class ObsidianKanbanAdapter implements TrackerAdapter {
   private async refreshParentChildren(parentRef: TicketRef): Promise<void> {
     const parsed = await this.loadParsed(parentRef);
     if (!parsed) return;
-    const childRefs = await this.childRefs(parentRef);
-    const childInfo: { slug: string; done: boolean }[] = [];
-    for (const c of childRefs) {
-      const cParsed = await this.loadParsed(c);
-      if (!cParsed) continue;
-      const slug = path.basename(c.id);
-      childInfo.push({ slug, done: cParsed.frontmatter.status === "Done" });
-    }
     const text = renderTicketFile({
       frontmatter: parsed.frontmatter,
       body: parsed.body,
-      children: childInfo,
+      children: await this.collectChildEntries(parentRef),
       log: parsed.log,
     });
     await writeFileAtomic(this.ticketFile(parentRef), text);
@@ -392,15 +436,12 @@ export class ObsidianKanbanAdapter implements TrackerAdapter {
       updated: new Date().toISOString(),
     };
 
-    const childRefs = await this.childRefs(ref);
-    const children: { slug: string; done: boolean }[] = [];
-    for (const c of childRefs) {
-      const p = await this.loadParsed(c);
-      if (!p) continue;
-      children.push({ slug: path.basename(c.id), done: p.frontmatter.status === "Done" });
-    }
-
-    const text = renderTicketFile({ frontmatter: fm, body: nextBody, children, log: parsed.log });
+    const text = renderTicketFile({
+      frontmatter: fm,
+      body: nextBody,
+      children: await this.collectChildEntries(ref),
+      log: parsed.log,
+    });
     await writeFileAtomic(this.ticketFile(ref), text);
 
     if (fm.parent === null) {
@@ -429,17 +470,10 @@ export class ObsidianKanbanAdapter implements TrackerAdapter {
       lock,
       updated: new Date().toISOString(),
     };
-    const childRefs = await this.childRefs(ref);
-    const children: { slug: string; done: boolean }[] = [];
-    for (const c of childRefs) {
-      const p = await this.loadParsed(c);
-      if (!p) continue;
-      children.push({ slug: path.basename(c.id), done: p.frontmatter.status === "Done" });
-    }
     const text = renderTicketFile({
       frontmatter: fm,
       body: parsed.body,
-      children,
+      children: await this.collectChildEntries(ref),
       log: parsed.log,
     });
     await writeFileAtomic(this.ticketFile(ref), text);
@@ -457,17 +491,10 @@ export class ObsidianKanbanAdapter implements TrackerAdapter {
       progress_summary: progress.progress_summary,
       updated: new Date().toISOString(),
     };
-    const childRefs = await this.childRefs(ref);
-    const children: { slug: string; done: boolean }[] = [];
-    for (const c of childRefs) {
-      const p = await this.loadParsed(c);
-      if (!p) continue;
-      children.push({ slug: path.basename(c.id), done: p.frontmatter.status === "Done" });
-    }
     const text = renderTicketFile({
       frontmatter: fm,
       body: parsed.body,
-      children,
+      children: await this.collectChildEntries(ref),
       log: parsed.log,
     });
     await writeFileAtomic(this.ticketFile(ref), text);
@@ -477,21 +504,11 @@ export class ObsidianKanbanAdapter implements TrackerAdapter {
     const parsed = await this.loadParsed(ref);
     if (!parsed) throw new Error(`ticket not found: ${ref.id}`);
     const stamped = `[${new Date().toISOString()}] ${line}`;
-    const log = [...parsed.log, stamped];
-
-    const childRefs = await this.childRefs(ref);
-    const children: { slug: string; done: boolean }[] = [];
-    for (const c of childRefs) {
-      const p = await this.loadParsed(c);
-      if (!p) continue;
-      children.push({ slug: path.basename(c.id), done: p.frontmatter.status === "Done" });
-    }
-
     const text = renderTicketFile({
       frontmatter: parsed.frontmatter,
       body: parsed.body,
-      children,
-      log,
+      children: await this.collectChildEntries(ref),
+      log: [...parsed.log, stamped],
     });
     await writeFileAtomic(this.ticketFile(ref), text);
   }

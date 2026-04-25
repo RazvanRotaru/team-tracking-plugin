@@ -63,15 +63,17 @@ export function parseTicketFile(text: string): ParsedTicketFile {
 }
 
 /**
- * Render a ticket.md given frontmatter, body, child slugs (for the auto
- * Children section), and log lines. Children are listed as wiki-links;
- * checked iff the child's status indicates Done — but we don't have child
- * status here, so callers pass a list of `{slug, done}`.
+ * Render a ticket.md given frontmatter, body, child entries, and log lines.
+ *
+ * Each child entry carries the absolute vault-relative wiki-link target
+ * (e.g. `projects/Demo/tickets/foo/children/bar/ticket`) so the link pins
+ * exactly one file regardless of how many other tickets share the same
+ * `ticket.md` basename or local folder layout.
  */
 export function renderTicketFile(args: {
   frontmatter: TicketFrontmatter;
   body: string;
-  children: ReadonlyArray<{ slug: string; done: boolean }>;
+  children: ReadonlyArray<{ linkTarget: string; slug: string; done: boolean }>;
   log: ReadonlyArray<string>;
 }): string {
   const fm = stringifyYaml(args.frontmatter, { lineWidth: 0 }).trimEnd();
@@ -83,7 +85,7 @@ export function renderTicketFile(args: {
     parts.push(SECTION_CHILDREN, "");
     for (const c of args.children) {
       const tick = c.done ? "x" : " ";
-      parts.push(`- [${tick}] [[children/${c.slug}/ticket|${c.slug}]]`);
+      parts.push(`- [${tick}] [[${c.linkTarget}|${c.slug}]]`);
     }
     parts.push("");
   }
