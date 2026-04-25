@@ -44,9 +44,17 @@ The orchestrator polls every 5–10 minutes while you work — reading your `pro
 - **Checkpoint often.** A long silence (no new checkpoint for >15 min) reads as "stuck or crashed" from the outside. Bank a SHA whenever there's a coherent unit of progress.
 - **Don't lie in the visible fields.** `progress_summary` should describe what the diff actually contains. If you claim to have written tests but the diff has none, the orchestrator (and the adversarial reviewer that reads the diff) will catch it — and rightly distrust the rest of your output.
 
-### Steering channel — read before each commit
+### Steering channel — read at every natural pause
 
-The orchestrator can leave directives on your ticket via `post_message`. **Check for new messages at every checkpoint cycle:**
+The orchestrator can leave directives on your ticket via `post_message`. The orchestrator expects a fairly instant reply, so you must poll **at every natural pause in your work** — not only at git-commit boundaries.
+
+A "natural pause" is anywhere your reasoning loop catches its breath:
+- After a test run completes (regardless of pass/fail)
+- After a tool result that took non-trivial time
+- Before starting a new sub-step inside the subtask
+- Always before a `commit_checkpoint` (this is the latest acceptable poll)
+
+Round-trip target: a question → response → ack cycle should complete in **2–4 min**. If you let 10+ minutes pass between polls, the orchestrator will time out, escalate, or pull the lock on TTL.
 
 ```
 read_messages(ref, since=<your last seen `at` value>)

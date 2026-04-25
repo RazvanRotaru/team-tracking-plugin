@@ -134,6 +134,34 @@ Reading `update`, `progress_summary`, and the recent commit's diff together:
 - **Hallucination** — the summary claims work that isn't in the diff (e.g. "added integration tests for X" but no test files appear). Don't trust the visible fields; trust the diff. Adversarial review will catch this; your job is to make sure it gets there.
 - **Stuck loop** — two consecutive polls show the same `progress_summary` and no new checkpoint SHA. The specialist is spinning. Try a nudge (below); if the next poll still shows no progress, plan to recover via TTL.
 
+### Steering cycle (orchestrator ↔ executor)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant O as Orchestrator
+    participant T as Tracker
+    participant E as Executor
+
+    Note over E: working...
+    O->>T: post_message(question)
+    T-->>O: { id:msg_A, at }
+    Note left of E: pause between work units (~30–90s)
+    E->>T: read_messages(since=lastSeen)
+    T-->>E: [msg_A]
+    E->>T: post_message(response, in_reply_to:msg_A)
+    Note right of O: tightened poll (~1–2 min) while awaiting reply
+    O->>T: read_messages(since=lastReadAt)
+    T-->>O: [response]
+    O->>T: post_message(ack, in_reply_to:response)
+    Note left of E: next pause
+    E->>T: read_messages(since)
+    T-->>E: [ack]
+    Note over E: continues
+```
+
+Round-trip target: **2–4 min**. Bounded by the slowest pause on either side.
+
 ### Corrective levers — the steering channel
 
 Specialists running [`team-tracking-execute`](../team-tracking-execute/SKILL.md) check `read_messages(ref, since=lastSeen)` at every checkpoint cycle. That's your synchronous-looking interrupt: post a message and the executor will pick it up the next time it pauses.
@@ -151,13 +179,15 @@ What `kind` to use:
 - `nudge` — directional ("stay in scope X", "stop adding tests"). Executor ACKs.
 - `question` — answer expected ("what blocked the retry path?"). Executor responds.
 
-After posting, on your next 5–10 min sweep, read responses:
+After posting, **tighten your polling cadence** until you've received a reply. Ordinary board sweeps run every 5–10 min; while a question is open, drop to **every 1–2 min** for that ticket's `read_messages`:
 
 ```
 read_messages(ref, since=<your last sweep>)
 ```
 
-Look for `kind == "response"` or `kind == "ack"` with `from == "executor"` (or whatever role identifier the specialist used).
+Look for `kind == "response"` or `kind == "ack"` with `from` matching the executor's role identifier. Target round-trip (question → response → your ack): **2–4 min**.
+
+If 10+ minutes pass with no reply: the executor is either deeply absorbed (less likely — they should be polling at every pause) or stuck. Treat as a heartbeat failure: inspect the diff at the last checkpoint, and consider escalating or recovering via TTL.
 
 ### When the channel isn't enough
 
