@@ -48,7 +48,10 @@ export function formatCard(args: {
   const head = `- [${tick}] [[${args.id}/ticket|${args.slug}]] #${args.priority} #${args.type}`;
   if (!args.children || args.children.length === 0) return head;
   const tail = args.children
-    .map((c) => `\t- [[${c.id}/ticket|${c.slug}]] · ${c.type} · ${c.status}`)
+    .map((c) => {
+      const childTick = c.status === "Done" ? "x" : " ";
+      return `\t- [${childTick}] [[${c.id}/ticket|${c.slug}]] · ${c.type} · ${c.status}`;
+    })
     .join("\n");
   return `${head}\n${tail}`;
 }

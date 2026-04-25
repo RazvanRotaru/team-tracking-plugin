@@ -102,7 +102,7 @@ const reviewerTask = await adapter.createTicket(project, {
 });
 // Leaves at default Backlog.
 
-await adapter.createTicket(project, {
+const briefSub = await adapter.createTicket(project, {
   type: "subtask",
   parent: reviewerTask,
   title: "Write the brief",
@@ -114,6 +114,9 @@ await adapter.createTicket(project, {
   title: "Send to ops",
   priority: "P2",
 });
+// Mark one subtask Done to show the [x] tick propagating into the parent
+// task's Children section AND into the parent's card sub-bullet.
+await adapter.updateTicket(briefSub, { status: "Done" });
 
 // ────────────────────────────────────────────────────────────────────
 // 4. In-progress top-level task with a live lock + checkpoint, so the

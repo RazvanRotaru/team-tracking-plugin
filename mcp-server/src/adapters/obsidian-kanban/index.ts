@@ -405,12 +405,16 @@ export class ObsidianKanbanAdapter implements TrackerAdapter {
 
     if (fm.parent === null) {
       // Top-level: re-render its own card (status / priority / title / child
-      // summary may all have changed).
+      // summary may all have changed). When status flips to Done the upsert
+      // moves the card into the Done column atomically as part of this write.
       const slug = path.basename(ref.id);
       await this.placeBoardCard(ref, fm.status, fm.priority, fm.type, slug);
     } else {
-      // Nested: any change to status/title can affect the ancestor card's
-      // sub-bullet rendering. Walk up and refresh.
+      // Nested transition: refresh the immediate parent's ## Children
+      // checklist (so its [ ] / [x] reflects this ticket's new status), then
+      // walk up to refresh the top-level ancestor's board card sub-bullet.
+      const parentRef: TicketRef = { project: ref.project, id: fm.parent };
+      await this.refreshParentChildren(parentRef);
       await this.refreshTopLevelBoardCard(ref);
     }
   }

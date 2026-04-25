@@ -62,4 +62,40 @@ describe("board-edit", () => {
     expect(x).toHaveLength(1);
     expect(x[0]?.column).toBe("In Progress");
   });
+
+  it("multi-line card with checkbox sub-bullets renders [ ] for non-Done and [x] for Done children", () => {
+    const cardLine = formatCard({
+      id: "tickets/parent",
+      slug: "parent",
+      priority: "P1",
+      type: "epic",
+      done: false,
+      children: [
+        { id: "tickets/parent/children/a", slug: "a", type: "story", status: "In Progress" },
+        { id: "tickets/parent/children/b", slug: "b", type: "story", status: "Done" },
+      ],
+    });
+    expect(cardLine).toContain("\t- [ ] [[tickets/parent/children/a/ticket|a]]");
+    expect(cardLine).toContain("\t- [x] [[tickets/parent/children/b/ticket|b]]");
+  });
+
+  it("upsert preserves a multi-line card during a column move (sub-bullets follow)", () => {
+    let board = initialBoardText();
+    const head = formatCard({
+      id: "tickets/parent",
+      slug: "parent",
+      priority: "P1",
+      type: "epic",
+      done: false,
+      children: [
+        { id: "tickets/parent/children/a", slug: "a", type: "story", status: "Todo" },
+      ],
+    });
+    board = upsertCard(board, { id: "tickets/parent", column: "Todo", cardLine: head });
+    board = upsertCard(board, { id: "tickets/parent", column: "In Progress", cardLine: head });
+    // Card should appear exactly once and bring its sub-bullet along.
+    const matches = board.match(/\[\[tickets\/parent\/children\/a\/ticket/g) ?? [];
+    expect(matches.length).toBe(1);
+    expect(board).toMatch(/## In Progress\n\n- \[ \] \[\[tickets\/parent\/ticket/);
+  });
 });
