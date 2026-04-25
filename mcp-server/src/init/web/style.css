@@ -1,0 +1,161 @@
+* {
+  box-sizing: border-box;
+}
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+body {
+  font: 15px / 1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  background: #fafafa;
+  color: #1a1a1a;
+  min-height: 100vh;
+}
+main {
+  max-width: 720px;
+  margin: 4rem auto;
+  padding: 0 1.25rem;
+}
+header h1 {
+  margin: 0 0 0.25rem;
+  font-size: 1.4rem;
+}
+.subtitle {
+  color: #666;
+  margin: 0 0 1.5rem;
+}
+.steps {
+  display: flex;
+  gap: 0.5rem;
+  list-style: none;
+  padding: 0;
+  margin: 0 0 2rem;
+}
+.steps li {
+  flex: 1;
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  background: #ececec;
+  color: #777;
+  font-size: 0.85rem;
+}
+.steps li.active {
+  background: #1a1a1a;
+  color: #fff;
+}
+.screen {
+  display: none;
+}
+.screen.active {
+  display: block;
+}
+h2 {
+  margin-top: 0;
+}
+.tile-row {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1rem;
+}
+.tile {
+  display: flex;
+  flex-direction: column;
+  text-align: left;
+  padding: 1.25rem;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  background: #fff;
+  cursor: pointer;
+  font: inherit;
+}
+.tile:hover {
+  border-color: #1a1a1a;
+}
+.tile strong {
+  display: block;
+  margin-bottom: 0.25rem;
+  font-size: 1rem;
+}
+.tile span {
+  color: #666;
+  font-size: 0.875rem;
+}
+.adapter-form {
+  display: none;
+}
+.adapter-form.active {
+  display: grid;
+  gap: 1rem;
+}
+.adapter-form label {
+  display: grid;
+  gap: 0.25rem;
+}
+.adapter-form label > span {
+  font-size: 0.875rem;
+  color: #444;
+}
+.adapter-form input {
+  padding: 0.5rem 0.75rem;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  font: inherit;
+}
+fieldset {
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  padding: 1rem;
+}
+fieldset legend {
+  padding: 0 0.5rem;
+  color: #666;
+  font-size: 0.85rem;
+}
+fieldset label {
+  grid-template-columns: 8rem 1fr;
+  align-items: center;
+}
+.row {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 1.5rem;
+  gap: 1rem;
+}
+button.primary,
+button.ghost {
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  font: inherit;
+  cursor: pointer;
+}
+button.primary {
+  background: #1a1a1a;
+  color: #fff;
+  border: 1px solid #1a1a1a;
+}
+button.ghost {
+  background: #fff;
+  color: #1a1a1a;
+  border: 1px solid #ccc;
+}
+pre {
+  background: #fff;
+  border: 1px solid #ddd;
+  padding: 1rem;
+  border-radius: 6px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 360px;
+  overflow: auto;
+}
+#status {
+  color: #666;
+  min-height: 1.5em;
+}
+#status.error {
+  color: #b00020;
+}
+#status.success {
+  color: #007a3d;
+}

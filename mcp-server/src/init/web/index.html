@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>team-tracking-mcp · setup</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>team-tracking-mcp</h1>
+        <p class="subtitle">Pick a tracker, configure, save.</p>
+        <ol class="steps">
+          <li data-step="1" class="active">Adapter</li>
+          <li data-step="2">Configure</li>
+          <li data-step="3">Save</li>
+        </ol>
+      </header>
+
+      <section data-screen="1" class="screen active">
+        <h2>Pick an adapter</h2>
+        <div class="tile-row">
+          <button class="tile" data-adapter="obsidian-kanban">
+            <strong>Obsidian Kanban</strong>
+            <span>Local vault, file-backed. Fastest path; no external creds.</span>
+          </button>
+          <button class="tile" data-adapter="jira">
+            <strong>Jira</strong>
+            <span>Cloud Jira. Requires base URL, email, API token.</span>
+          </button>
+        </div>
+      </section>
+
+      <section data-screen="2" class="screen">
+        <h2>Configure adapter</h2>
+
+        <form id="form-obsidian-kanban" class="adapter-form">
+          <label>
+            <span>Vault path (absolute or relative to cwd)</span>
+            <input name="vaultPath" required placeholder="/Users/me/vault" />
+          </label>
+          <label>
+            <span>Project name</span>
+            <input name="projectName" required placeholder="Autopilot" />
+          </label>
+          <label>
+            <span>Project folder (under vault/projects/)</span>
+            <input
+              name="adapterProjectRef"
+              required
+              placeholder="projects/Autopilot"
+              value="projects/Autopilot"
+            />
+          </label>
+        </form>
+
+        <form id="form-jira" class="adapter-form">
+          <label>
+            <span>Base URL</span>
+            <input name="baseUrl" required placeholder="https://acme.atlassian.net" />
+          </label>
+          <label>
+            <span>Email</span>
+            <input name="email" type="email" required placeholder="you@acme.com" />
+          </label>
+          <label>
+            <span>API token</span>
+            <input name="apiToken" type="password" required />
+          </label>
+          <label>
+            <span>Project name</span>
+            <input name="projectName" required placeholder="Autopilot" />
+          </label>
+          <label>
+            <span>Jira project key</span>
+            <input name="adapterProjectRef" required placeholder="AUTO" />
+          </label>
+          <fieldset>
+            <legend>Status mapping (canonical → Jira)</legend>
+            <label>
+              <span>Backlog</span>
+              <input name="status_Backlog" value="Backlog" />
+            </label>
+            <label>
+              <span>Todo</span>
+              <input name="status_Todo" value="To Do" />
+            </label>
+            <label>
+              <span>In Progress</span>
+              <input name="status_InProgress" value="In Progress" />
+            </label>
+            <label>
+              <span>In Review</span>
+              <input name="status_InReview" value="In Review" />
+            </label>
+            <label>
+              <span>Done</span>
+              <input name="status_Done" value="Done" />
+            </label>
+            <label>
+              <span>Blocked</span>
+              <input name="status_Blocked" value="Blocked" />
+            </label>
+          </fieldset>
+        </form>
+
+        <div class="row">
+          <button class="ghost" data-back>Back</button>
+          <button class="primary" data-next>Next</button>
+        </div>
+      </section>
+
+      <section data-screen="3" class="screen">
+        <h2>Review &amp; save</h2>
+        <pre id="preview"></pre>
+        <div class="row">
+          <button class="ghost" data-back>Back</button>
+          <button class="primary" id="save">Save config</button>
+        </div>
+        <p id="status" role="status" aria-live="polite"></p>
+      </section>
+    </main>
+    <script src="app.js"></script>
+  </body>
+</html>

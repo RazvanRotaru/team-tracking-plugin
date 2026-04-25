@@ -1,0 +1,26 @@
+{
+  "name": "team-tracking-plugin",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Claude Code plugin: MCP server + adapters for tracker-backed multi-agent orchestration",
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "pnpm@10.0.0",
+  "scripts": {
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "biome check .",
+    "format": "biome format --write .",
+    "dev": "pnpm --filter team-tracking-mcp-server dev",
+    "init": "pnpm --filter team-tracking-mcp-server init"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "1.9.4",
+    "typescript": "5.6.3"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["@biomejs/biome", "esbuild"]
+  }
+}

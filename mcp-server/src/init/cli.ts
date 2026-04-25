@@ -1,0 +1,171 @@
+import * as path from "node:path";
+import { ensureGitignored, isGitRepo } from "../config/gitignore.js";
+import { type Config, ConfigSchema, defaultConfigPath, saveConfig } from "../config/loader.js";
+
+type Args = Record<string, string | boolean>;
+
+function parseArgs(argv: readonly string[]): Args {
+  const out: Args = {};
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i] ?? "";
+    if (!a.startsWith("--")) continue;
+    const key = a.slice(2);
+    const next = argv[i + 1];
+    if (next === undefined || next.startsWith("--")) {
+      out[key] = true;
+    } else {
+      out[key] = next;
+      i++;
+    }
+  }
+  return out;
+}
+
+function usage(): string {
+  return `usage: team-tracking init --adapter <obsidian-kanban|jira> [options]
+
+  --adapter            obsidian-kanban | jira
+  --vault              (obsidian) path to vault root
+  --project            project name (e.g. Autopilot)
+  --project-ref        adapter-side project ref (default: project name for obsidian)
+  --lock-ttl           lock TTL in seconds (default: 1800)
+  --jira-base-url      (jira) Atlassian base URL
+  --jira-email         (jira) account email
+  --jira-api-token     (jira) API token
+  --no-gitignore       skip updating .gitignore
+  --config             output path (default: ./.team-tracking/config.json)
+  --headless           non-interactive (currently the only mode)
+`;
+}
+
+export async function runHeadlessInit(argv: readonly string[]): Promise<{
+  configPath: string;
+  config: Config;
+  gitignoreUpdated: boolean | null;
+}> {
+  const args = parseArgs(argv);
+  const adapter = args.adapter;
+  if (typeof adapter !== "string") {
+    throw new Error(`missing --adapter\n\n${usage()}`);
+  }
+
+  const projectName = typeof args.project === "string" ? args.project : "Default";
+  const lockTtlSeconds = typeof args["lock-ttl"] === "string" ? Number(args["lock-ttl"]) : 1800;
+
+  let config: Config;
+  if (adapter === "obsidian-kanban") {
+    if (typeof args.vault !== "string") {
+      throw new Error("obsidian-kanban requires --vault <path>");
+    }
+    const adapterProjectRef =
+      typeof args["project-ref"] === "string" ? args["project-ref"] : `projects/${projectName}`;
+    config = ConfigSchema.parse({
+      version: 1,
+      adapter: "obsidian-kanban",
+      adapterConfig: { vaultPath: path.resolve(args.vault) },
+      projects: [{ name: projectName, adapterProjectRef }],
+      lockTtlSeconds,
+    });
+  } else if (adapter === "jira") {
+    const baseUrl = args["jira-base-url"];
+    const email = args["jira-email"];
+    const apiToken = args["jira-api-token"];
+    if (typeof baseUrl !== "string" || typeof email !== "string" || typeof apiToken !== "string") {
+      throw new Error("jira requires --jira-base-url, --jira-email, --jira-api-token");
+    }
+    const adapterProjectRef =
+      typeof args["project-ref"] === "string" ? args["project-ref"] : projectName;
+    config = ConfigSchema.parse({
+      version: 1,
+      adapter: "jira",
+      adapterConfig: {
+        baseUrl,
+        email,
+        apiToken,
+        statusMap: {
+          Backlog: "Backlog",
+          Todo: "To Do",
+          "In Progress": "In Progress",
+          "In Review": "In Review",
+          Done: "Done",
+          Blocked: "Blocked",
+        },
+      },
+      projects: [{ name: projectName, adapterProjectRef }],
+      lockTtlSeconds,
+    });
+  } else {
+    throw new Error(`unknown adapter "${adapter}"`);
+  }
+
+  const target = typeof args.config === "string" ? path.resolve(args.config) : defaultConfigPath();
+  const written = await saveConfig(config, target);
+
+  let gitignoreUpdated: boolean | null = null;
+  if (args["no-gitignore"] !== true) {
+    const repoRoot = path.dirname(path.dirname(written)); // strip /.team-tracking/config.json
+    if (await isGitRepo(repoRoot)) {
+      const r = await ensureGitignored(repoRoot);
+      gitignoreUpdated = r.changed;
+    }
+  }
+
+  return { configPath: written, config, gitignoreUpdated };
+}
+
+async function main(): Promise<void> {
+  const argv = process.argv.slice(2);
+  const first = argv[0];
+  if (first === "--help" || first === "-h") {
+    process.stdout.write(usage());
+    return;
+  }
+  // Strip a leading literal "init" subcommand if present.
+  const rest = first === "init" ? argv.slice(1) : argv;
+
+  const hasArgs = rest.some((a) => a.startsWith("--") && a !== "--no-browser");
+  let result: {
+    configPath: string;
+    config: Config;
+    gitignoreUpdated: boolean | null;
+  };
+  if (!hasArgs) {
+    const { runInitWeb } = await import("./server.js");
+    result = await runInitWeb({
+      onUrl: (url) => process.stdout.write(`open in your browser: ${url}\n`),
+      noBrowser: rest.includes("--no-browser"),
+    });
+  } else {
+    result = await runHeadlessInit(rest);
+  }
+
+  const { configPath, config, gitignoreUpdated } = result;
+  process.stdout.write(
+    `${[
+      `wrote ${configPath}`,
+      `adapter: ${config.adapter}`,
+      `projects: ${config.projects.map((p) => p.name).join(", ")}`,
+      gitignoreUpdated === true ? "updated .gitignore" : "",
+      gitignoreUpdated === false ? ".gitignore already up to date" : "",
+    ]
+      .filter(Boolean)
+      .join("\n")}\n`,
+  );
+}
+
+const isEntry = (() => {
+  try {
+    const argv1 = process.argv[1];
+    if (!argv1) return false;
+    return import.meta.url.endsWith(argv1) || import.meta.url.endsWith(`${argv1}.js`);
+  } catch {
+    return false;
+  }
+})();
+
+if (isEntry) {
+  main().catch((err) => {
+    process.stderr.write(`${err instanceof Error ? err.message : err}\n`);
+    process.exit(1);
+  });
+}

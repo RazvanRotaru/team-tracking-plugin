@@ -1,0 +1,13 @@
+{
+  "name": "team-tracking-mcp",
+  "version": "0.0.1",
+  "description": "Tracker-backed orchestration for multi-agent Claude Code runs (Jira / Obsidian Kanban)",
+  "mcpServers": {
+    "team-tracking": {
+      "command": "node",
+      "args": ["${PLUGIN_DIR}/mcp-server/dist/index.js"]
+    }
+  },
+  "commands": ["commands/init.md", "commands/status.md", "commands/reconfigure.md"],
+  "skills": ["skills/team-tracking-usage/SKILL.md"]
+}
