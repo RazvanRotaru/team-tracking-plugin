@@ -51,6 +51,13 @@ export type RunInitWebOpts = {
   onUrl?: (url: string) => void;
   /** Override of repo root for gitignore detection (defaults to dirname(dirname(configPath))). */
   repoRoot?: string;
+  /**
+   * Interface to bind on. Default `127.0.0.1` — single-machine flow. Pass a
+   * routable address (LAN / Tailscale IP, or `0.0.0.0`) to make the page
+   * reachable from another host. Token auth still applies; the Host-header
+   * check is relaxed when bound away from localhost.
+   */
+  host?: string;
 };
 
 /**
@@ -59,6 +66,8 @@ export type RunInitWebOpts = {
 export async function runInitWeb(opts: RunInitWebOpts = {}): Promise<InitWebResult> {
   const token = randomBytes(24).toString("base64url");
   const target = opts.configPath ?? defaultConfigPath();
+  const bindHost = opts.host ?? "127.0.0.1";
+  const isLocalhost = bindHost === "127.0.0.1" || bindHost === "localhost";
 
   let resolveResult: (r: InitWebResult) => void;
   let rejectResult: (e: Error) => void;
@@ -69,13 +78,17 @@ export async function runInitWeb(opts: RunInitWebOpts = {}): Promise<InitWebResu
 
   const server = http.createServer(async (req, res) => {
     try {
-      // Reject anything not addressed to localhost; node already enforces the
-      // bind, but reject by Host header as a belt-and-suspenders.
-      const host = req.headers.host ?? "";
-      if (!host.startsWith("127.0.0.1") && !host.startsWith("localhost")) {
-        res.writeHead(403).end("forbidden");
-        return;
+      // When bound to localhost, also enforce a localhost Host header as
+      // belt-and-suspenders. When bound to a routable address the user has
+      // explicitly opened the door; we trust the token alone.
+      if (isLocalhost) {
+        const host = req.headers.host ?? "";
+        if (!host.startsWith("127.0.0.1") && !host.startsWith("localhost")) {
+          res.writeHead(403).end("forbidden");
+          return;
+        }
       }
+      const host = req.headers.host ?? bindHost;
 
       const url = new URL(req.url ?? "/", `http://${host}`);
       const submittedToken = url.searchParams.get("t") ?? req.headers["x-token"];
@@ -127,7 +140,7 @@ export async function runInitWeb(opts: RunInitWebOpts = {}): Promise<InitWebResu
 
   await new Promise<void>((res, rej) => {
     server.once("error", rej);
-    server.listen(0, "127.0.0.1", () => res());
+    server.listen(0, bindHost, () => res());
   });
 
   const addr = server.address();
@@ -135,7 +148,11 @@ export async function runInitWeb(opts: RunInitWebOpts = {}): Promise<InitWebResu
     server.close();
     throw new Error("failed to bind init server");
   }
-  const url = `http://127.0.0.1:${addr.port}/?t=${token}`;
+  // For 0.0.0.0 the URL needs a routable host, not the wildcard. Fall back
+  // to localhost — the user can substitute whatever IP they reach the
+  // machine on. For an explicit IP/hostname, use it as-is.
+  const urlHost = bindHost === "0.0.0.0" ? "localhost" : bindHost;
+  const url = `http://${urlHost}:${addr.port}/?t=${token}`;
   opts.onUrl?.(url);
   if (!opts.noBrowser) {
     void openBrowser(url).catch(() => {

@@ -35,6 +35,12 @@ function usage(): string {
   --no-gitignore       skip updating .gitignore
   --config             output path (default: ./.team-tracking/config.json)
   --headless           non-interactive (currently the only mode)
+
+webpage flow (no adapter args):
+  --bind <host>        interface to bind on (default: 127.0.0.1).
+                       use a LAN/Tailscale IP or 0.0.0.0 to reach from
+                       another machine. token still gates auth.
+  --no-browser         don't open a browser, just print the URL
 `;
 }
 
@@ -123,17 +129,25 @@ async function main(): Promise<void> {
   // Strip a leading literal "init" subcommand if present.
   const rest = first === "init" ? argv.slice(1) : argv;
 
-  const hasArgs = rest.some((a) => a.startsWith("--") && a !== "--no-browser");
+  // Webpage-mode flags (don't trigger headless mode):
+  const webOnlyFlags = new Set(["--no-browser", "--bind"]);
+  const hasHeadlessArgs = rest.some(
+    (a, i) => a.startsWith("--") && !webOnlyFlags.has(a) && !(rest[i - 1] === "--bind"),
+  );
+
   let result: {
     configPath: string;
     config: Config;
     gitignoreUpdated: boolean | null;
   };
-  if (!hasArgs) {
+  if (!hasHeadlessArgs) {
+    const bindIdx = rest.indexOf("--bind");
+    const bindHost = bindIdx >= 0 ? rest[bindIdx + 1] : undefined;
     const { runInitWeb } = await import("./server.js");
     result = await runInitWeb({
       onUrl: (url) => process.stdout.write(`open in your browser: ${url}\n`),
       noBrowser: rest.includes("--no-browser"),
+      host: bindHost,
     });
   } else {
     result = await runHeadlessInit(rest);
