@@ -39,6 +39,11 @@ Read `recovered_checkpoint.update` + `progress_summary` for context, then resume
 
 ## During work
 
+The orchestrator polls every 5–10 minutes while you work — reading your `progress_summary`, your `update` line, and the diff of your last checkpoint SHA. That's how it catches drift, hallucination, and stuck loops early. Two implications:
+
+- **Checkpoint often.** A long silence (no new checkpoint for >15 min) reads as "stuck or crashed" from the outside. Bank a SHA whenever there's a coherent unit of progress.
+- **Don't lie in the visible fields.** `progress_summary` should describe what the diff actually contains. If you claim to have written tests but the diff has none, the orchestrator (and the adversarial reviewer that reads the diff) will catch it — and rightly distrust the rest of your output.
+
 After **every** git commit you intend to keep:
 
 ```

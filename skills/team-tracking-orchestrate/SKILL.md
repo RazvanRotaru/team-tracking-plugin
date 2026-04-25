@@ -84,15 +84,76 @@ You don't acquire locks. The specialist does. Your handoff is:
 3. They run [`team-tracking-execute`](../team-tracking-execute/SKILL.md) — acquire → checkpoint → release
 4. When they release as `Blocked`, read the ticket's `update` + `progress_summary` and decide: split further, reassign, or escalate to user/architect
 
-## Polling for progress
+## Polling specialists in flight
+
+Long-running specialists drift. They hallucinate (claim work that isn't in the diff), scope-creep (start touching files outside the subtask), or get stuck looping (same `progress_summary` poll after poll). Don't wait for the release — check in.
+
+### Cadence
+
+**Every 5–10 minutes** while any subtask is in flight. Faster (e.g. every minute) is noise for everyone — the audit log floods, Jira may rate-limit, and humans watching the board lose signal. Slower (>15 min) lets drift compound past the point where a corrective re-dispatch is cheap.
+
+### What to read
 
 ```
 list_board(project)
 ```
 
-Re-read between dispatches. Look for:
-- `Blocked` tickets — read `progress_summary` and act
-- Stale `committed` locks (past TTL with the same checkpoint for too long) — likely crashed; offer to recover
+For each ticket where `lock_state ∈ {"in_progress", "committed"}`:
+
+```
+get_ticket(ref)
+```
+
+Then for any ticket where `lock_state == "committed"`, **inspect the actual diff** of the last checkpoint:
+
+```bash
+git show <lock.last_checkpoint.commit_id>
+```
+
+The board tells you what the specialist *says* it did; the diff tells you what it actually did. They don't always agree — that's the whole reason to poll.
+
+### Heartbeat
+
+```
+last_activity = max(lock.acquired_at, lock.last_checkpoint?.at)
+age           = now - last_activity
+```
+
+| Age | Interpretation | Action |
+|---|---|---|
+| < 5 min | Healthy | Move on |
+| 5–15 min | Normal for non-trivial work | Read `progress_summary`. Confirm it tracks the spec |
+| 15–30 min | Concerning | Inspect the last commit's diff. If on-spec, give it room. If drifting, prepare a corrective dispatch |
+| > TTL (default 30 min) | Stale lock | Lock is recoverable. Re-acquire to claim `recovered_checkpoint` and re-dispatch |
+
+### Drift signals
+
+Reading `update`, `progress_summary`, and the recent commit's diff together:
+
+- **Scope creep** — `progress_summary` mentions modules, files, or behaviors outside the subtask spec. The diff confirms files outside the expected scope changed. Note it; budget extra time for the adversarial code review to flag it.
+- **Hallucination** — the summary claims work that isn't in the diff (e.g. "added integration tests for X" but no test files appear). Don't trust the visible fields; trust the diff. Adversarial review will catch this; your job is to make sure it gets there.
+- **Stuck loop** — two consecutive polls show the same `progress_summary` and no new checkpoint SHA. The specialist is spinning. Try a nudge (below); if the next poll still shows no progress, plan to recover via TTL.
+
+### Corrective levers
+
+Be honest about what each lever actually does — none of them reach into a running subagent's tool loop.
+
+1. **`append_log(ref, "ORCHESTRATOR-NUDGE: <directive>")`** — leaves a breadcrumb. The running specialist *may not* read its own log mid-flight. Treat the nudge as a message to the *next* specialist or to the adversarial reviewer, not as a synchronous interrupt.
+2. **Wait out the TTL** — if the specialist is unresponsive (no new checkpoint past TTL), the lock becomes recoverable. `acquire_ticket` returns the prior `recovered_checkpoint` and you can re-dispatch with corrective context.
+3. **Surface to the user / architect** — when drift is consequential (data loss, time pressure, architectural mistake), don't quietly absorb it. Get a human in the loop.
+
+What you should **not** do:
+
+- Don't force-acquire a non-stale lock. The lock contract protects in-flight work; bypassing it corrupts state.
+- Don't update or rewrite the subtask's body / status while the specialist holds the lock — they may rely on those fields.
+- Don't over-poll. 5–10 min is the sweet spot. Re-reading every minute is noise; agents need contiguous focus too.
+
+## Polling for blocked / completed
+
+Same `list_board(project)` call covers it. Look for:
+- `Blocked` tickets — read `progress_summary` (the executor wrote you a briefing) and act: split, reassign, or surface to the user.
+- Stale `committed` locks past TTL with the same checkpoint for too long — likely crashed; recover via re-acquire.
+- Newly `Done` subtasks — dispatch the next pipeline stage if there is one.
 
 ## Red flags
 
