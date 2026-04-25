@@ -14,7 +14,7 @@ export const BOARD_COLUMNS: readonly string[] = [
  */
 export function initialBoardText(): string {
   const cols = BOARD_COLUMNS.map((c) => `## ${c}\n`).join("\n");
-  return `---\n\nkanban-plugin: board\n\n---\n\n${cols}\n%% kanban:settings\n\`\`\`yaml\n{}\n\`\`\`\n%%\n`;
+  return `---\n\nkanban-plugin: board\n\n---\n\n${cols}\n%% kanban:settings\n\`\`\`\n{}\n\`\`\`\n%%\n`;
 }
 
 /**
