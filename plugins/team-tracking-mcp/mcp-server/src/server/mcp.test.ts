@@ -53,6 +53,7 @@ describe("MCP wiring (in-memory transport)", () => {
         "list_board",
         "list_children",
         "post_message",
+        "read_events",
         "read_messages",
         "release_ticket",
         "report_progress",

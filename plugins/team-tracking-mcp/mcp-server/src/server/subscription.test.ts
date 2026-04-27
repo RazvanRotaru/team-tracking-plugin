@@ -51,9 +51,7 @@ describe("Subscription (Obsidian fs.watch)", () => {
 
     const eventsEnvs = collected.filter((e) => e.type === "events");
     expect(eventsEnvs.length).toBeGreaterThanOrEqual(1);
-    const ids = eventsEnvs.flatMap((e) =>
-      e.type === "events" ? e.events.map((ev) => ev.id) : [],
-    );
+    const ids = eventsEnvs.flatMap((e) => (e.type === "events" ? e.events.map((ev) => ev.id) : []));
     expect(ids).toContain("evt_recent");
     expect(ids).not.toContain("evt_old");
 
@@ -61,11 +59,7 @@ describe("Subscription (Obsidian fs.watch)", () => {
   });
 
   it("delivers a live event appended after subscribe via fs.watch", async () => {
-    const sub = new Subscription(
-      adapter,
-      { project: "P", ticket: ref },
-      { timeoutMs: 5000 },
-    );
+    const sub = new Subscription(adapter, { project: "P", ticket: ref }, { timeoutMs: 5000 });
     const iter = sub.stream();
 
     // Kick off consumption asynchronously, capture the first events envelope.

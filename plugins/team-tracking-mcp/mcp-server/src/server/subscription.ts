@@ -59,7 +59,11 @@ export class Subscription {
     try {
       const drained = await this.drain();
       if (drained.length > 0) {
-        this.enqueue({ type: "events", ref: drained[0]?.ref ?? this.fallbackRef(), events: drained.map((d) => d.event) });
+        this.enqueue({
+          type: "events",
+          ref: drained[0]?.ref ?? this.fallbackRef(),
+          events: drained.map((d) => d.event),
+        });
       }
     } catch (e) {
       this.enqueue({ type: "error", reason: (e as Error).message });
@@ -77,7 +81,7 @@ export class Subscription {
           if (this.cancelled) return;
           const filtered = this.applyFilters(events);
           if (filtered.length === 0) return;
-          if (this.scope.ticket && (this.scope.ticket.id !== ref.id)) return;
+          if (this.scope.ticket && this.scope.ticket.id !== ref.id) return;
           this.enqueue({ type: "events", ref, events: filtered });
         });
       } catch (e) {

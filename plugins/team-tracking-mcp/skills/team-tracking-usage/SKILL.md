@@ -1,6 +1,6 @@
 ---
 name: team-tracking-usage
-description: Reference for the team-tracking MCP server — the ten tools, the four ticket types, the lock state machine, and the typed errors. Load this when you need to know what a tool does or how `lock_state` is derived. For role-specific protocols, use `team-tracking-orchestrate` (planner) or `team-tracking-execute` (specialist).
+description: Reference for the team-tracking MCP server — the eleven tools, the four ticket types, the unified event log, the lock state machine, and the typed errors. Load this when you need to know what a tool does or how `lock_state` is derived. For role-specific protocols, use `team-tracking-orchestrate` (planner) or `team-tracking-execute` (specialist).
 ---
 
 # team-tracking-usage
@@ -30,43 +30,88 @@ Server-enforced parent rules:
 
 Subtasks are the atomic unit a specialist owns. A task without subtasks is incomplete planning (see `team-tracking-orchestrate`).
 
-## The ten tools
+## The unified event log
+
+Every state change on a ticket is recorded as an append-only `Event` on that ticket. The log is the audit-canonical surface; the scalar fields exposed by `get_ticket` (`update`, `progress_summary`, `lock`) are read caches that mirror the latest relevant event.
+
+| Event type | Emitted when |
+|---|---|
+| `message` | `post_message` (steering channel — nudges, questions, responses, acks) |
+| `checkpoint` | `commit_checkpoint` |
+| `progress` | `report_progress` |
+| `log` | `append_log` |
+| `status_change` | Any tool call that changes `status` |
+| `lock_change` | `acquire_ticket` (action: `acquire` or `recover`), `release_ticket` (action: `release`) |
+
+Events are ordered by their server-minted `at` timestamp. The cursor for incremental reads is `since` — string compare on ISO-8601 is monotonic, so `at > since` is well-defined.
+
+## The eleven tools
 
 ### Reads
 - `list_board(project)` — top-level tickets in priority order: `In Progress` → `Todo` → `Backlog`. Excludes `In Review` and `Done`.
-- `get_ticket(ref)` — full ticket: body, lock, lock_state, update, progress_summary, children.
+- `get_ticket(ref)` — full ticket: body, lock, lock_state, update, progress_summary, children. Reads from the cache fields; for the full audit history use `read_events`.
 - `list_children(ref)` — immediate children resolved as full DTOs.
+- `read_events(ref, { since?, types? })` — the unified event log. Pass `since` to advance a stateless cursor. Pass `types` (e.g. `["message"]`) to filter.
+- `read_messages(ref, since?)` — convenience projection equivalent to `read_events(ref, { since, types: ["message"] })` shaped as `Message[]`.
 
 ### Orchestrator writes
 - `create_ticket(project, draft)` — server enforces parent-type rules. The caller chooses the top-level type based on PRD complexity, never inferred.
-- `update_ticket(ref, update)` — patch `title`, `body`, `status`, `priority`, `labels`, `scope`, `branch`, `pr_url`. Cannot change `type` or `parent` after creation.
+- `update_ticket(ref, update)` — patch `title`, `body`, `status`, `priority`, `labels`, `scope`, `branch`, `pr_url`. Cannot change `type` or `parent` after creation. A `status` change emits a `status_change` event.
 
 ### Lock-bound writes (specialist)
-Every subtask handoff follows: **acquire → (commit_checkpoint × N) → release.**
+Every subtask handoff follows: **acquire → (commit_checkpoint × N) → release.** Each call records one or more events.
 
 - `acquire_ticket(ref, owner)` → `{ lock_token, recovered_checkpoint }`
   - Mints a fresh token. Subsequent calls must include it.
-  - `recovered_checkpoint` is non-null when the previous holder timed out (TTL-stale lock); it carries the last good `commit_id` so the orchestrator can `git reset --hard` before retrying.
+  - `recovered_checkpoint` is non-null when the previous holder timed out (TTL-stale lock); it carries the last good `commit_id`.
+  - Emits `lock_change` (action: `acquire` or `recover`) plus a `status_change` if Todo → In Progress.
 - `commit_checkpoint(ref, { lock_token, commit_id, update?, progress_summary? })`
-  - Call **after** making the actual git commit. The server records the SHA without verifying it; you must have created it on the ticket's branch.
-  - Updates the visible `update` and `progress_summary` fields too.
+  - Call **after** making the actual git commit. Records a `checkpoint` event.
 - `release_ticket(ref, { lock_token, final_status })`
-  - Typical `final_status`: `Done` (criteria met) or `Blocked` (needs human / orchestrator).
+  - Emits `lock_change` (action: `release`) plus a `status_change` if `final_status` differs from the current status.
 
 Between commits:
-- `report_progress(ref, { lock_token, status?, update?, progress_summary? })` — pulse update without recording a SHA.
+- `report_progress(ref, { lock_token, status?, update?, progress_summary? })` — pulse update without recording a SHA. Emits a `progress` event (and a `status_change` when `status` is provided and differs).
 
 Audit trail (no lock required):
-- `append_log(ref, line)` — append-only. Anyone may log.
+- `append_log(ref, line)` — append-only. Anyone may log. Emits a `log` event.
 
 ### Steering channel (no lock required)
 
 Bidirectional, async, plugin-agnostic messaging on the ticket itself. Used by `team-tracking-orchestrate` to nudge specialists in flight, and by `team-tracking-execute` to ACK / answer / push back.
 
-- `post_message(ref, { from, kind?, body, in_reply_to? })` → `Message` (server mints `id` and `at`)
-- `read_messages(ref, since?)` → `Message[]` ordered by `at` ascending; `since` is an ISO-8601 timestamp filter (`at > since`).
+- `post_message(ref, { from, kind?, body, in_reply_to? })` → `Message` (server mints `id` and `at`). Emits a `message` event.
 
 Conventional `kind` values: `nudge`, `question`, `response`, `ack`, `info`. Free-text — the server does not enforce.
+
+### Real-time delivery: the listen CLI
+
+Polling `read_events` / `read_messages` works but burns cycles. Use the listen CLI as a **background bash process** for push-style delivery:
+
+```
+team-tracking listen --project <p> [--ticket-id <id>] [--since <iso>] \
+                     [--types message,checkpoint,...] [--timeout-ms 300000]
+```
+
+Output is JSONL on stdout, one envelope per line:
+
+```
+{"type":"events","ref":{"project":"P","id":"..."},"events":[...]}
+{"type":"timeout"}
+{"type":"error","reason":"..."}
+```
+
+Exit code is always 0 — errors come through stdout so the harness's "background process completed" notification surfaces them naturally. The CLI **drains** any buffered events newer than `--since` immediately, then streams live events via the adapter's watcher (Obsidian: fs.watch; Jira: poll). It exits on the first non-empty `events` envelope, on timeout, or on error.
+
+Typical use from a subagent or orchestrator:
+
+```
+Bash(team-tracking listen --project P --since <last_seen_at> ...,
+     run_in_background: true) → handle_1
+... do work ...
+[harness: "background process handle_1 ended with output: {...}"]
+... handle the events, post a response, re-spawn listener ...
+```
 
 ## Lock state machine
 
@@ -112,4 +157,4 @@ Tool calls return `{ isError: true, content: [{ text: "EXXX: <message>" }] }` fo
 
 - `branch` and `pr_url` should be set as soon as either exists — the link between board state and code state.
 - `scope` is free-text (typically a module or package name). The orchestrator reads it to detect concurrent-work conflicts; the server does not pattern-match.
-- `update` is a one-liner overwritten each checkpoint. `progress_summary` is the rolling cumulative summary, also overwritten.
+- `update` is a one-liner reflected from the latest checkpoint or progress event. `progress_summary` is the rolling cumulative summary, also derived. The full history is in `read_events`.

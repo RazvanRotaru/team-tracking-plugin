@@ -44,25 +44,38 @@ The orchestrator polls every 5–10 minutes while you work — reading your `pro
 - **Checkpoint often.** A long silence (no new checkpoint for >15 min) reads as "stuck or crashed" from the outside. Bank a SHA whenever there's a coherent unit of progress.
 - **Don't lie in the visible fields.** `progress_summary` should describe what the diff actually contains. If you claim to have written tests but the diff has none, the orchestrator (and the adversarial reviewer that reads the diff) will catch it — and rightly distrust the rest of your output.
 
-### Steering channel — read at every natural pause
+### Steering channel — push delivery via the listen CLI
 
-The orchestrator can leave directives on your ticket via `post_message`. The orchestrator expects a fairly instant reply, so you must poll **at every natural pause in your work** — not only at git-commit boundaries.
+The orchestrator can leave directives on your ticket via `post_message`. You don't poll for them — instead, you keep a **background bash process** running that delivers events as they arrive.
 
-A "natural pause" is anywhere your reasoning loop catches its breath:
-- After a test run completes (regardless of pass/fail)
-- After a tool result that took non-trivial time
-- Before starting a new sub-step inside the subtask
-- Always before a `commit_checkpoint` (this is the latest acceptable poll)
-
-Round-trip target: a question → response → ack cycle should complete in **2–4 min**. If you let 10+ minutes pass between polls, the orchestrator will time out, escalate, or pull the lock on TTL.
+After acquiring the lock, spawn:
 
 ```
-read_messages(ref, since=<your last seen `at` value>)
+Bash(
+  team-tracking listen --project <project> --ticket-id <ref.id> \
+                       --since <lastSeen> --timeout-ms 300000,
+  run_in_background: true
+) → handle_N
 ```
 
-Track the `at` of the most recent message you've handled. On startup, set `lastSeen = lock.acquired_at` (you start fresh). Each subsequent call passes the latest `at` you've already processed.
+Initial `lastSeen = lock.acquired_at`. The CLI:
+- **Drains** any events with `at > since` immediately (handles the race where a message landed between your last cycle and this re-spawn).
+- **Tails** new events via the adapter watcher (Obsidian: fs.watch; Jira: poll).
+- Exits on the first non-empty `events` envelope, on timeout (5 min default → re-spawn), or on error.
 
-For each new message where `from` is the orchestrator (or any non-executor role):
+Output is JSONL:
+
+```
+{"type":"events","ref":{"project":"P","id":"..."},"events":[...]}
+{"type":"timeout"}
+{"type":"error","reason":"..."}
+```
+
+When the harness notifies you that the background bash ended, parse the last line, advance your `lastSeen` cursor to `max(events.map(e => e.at))`, and act on it.
+
+Round-trip target: a question → response → ack cycle should complete in **under 1 min** of round-trip wall time (latency is bounded by your own in-flight tool call duration). If 10+ minutes pass with no replies, the orchestrator will treat you as stuck, escalate, or pull the lock on TTL.
+
+For each new event where `type == "message"` and `from` is the orchestrator (or any non-executor role):
 
 1. **Read it.** Take it at face value — it's the orchestrator's view of where you should be.
 2. **Decide.** Will you comply, push back, or need to escalate?
@@ -77,7 +90,15 @@ For each new message where `from` is the orchestrator (or any non-executor role)
    })
    ```
 
-If the orchestrator's directive is wrong (e.g. you have valid context they don't), push back — `kind: "response"` with reasoning. Don't silently comply with bad guidance; the orchestrator polls for your reply on its next sweep.
+4. **Re-spawn the listener** so you don't miss the next event:
+
+   ```
+   Bash(team-tracking listen --since <new-lastSeen> ..., run_in_background: true)
+   ```
+
+If the orchestrator's directive is wrong (e.g. you have valid context they don't), push back — `kind: "response"` with reasoning. Don't silently comply with bad guidance.
+
+The harness only surfaces the background-bash completion *between* your tool calls. So if you're mid-`Bash(run tests)` when a message arrives, you'll see it after the test command returns. That's fine — the latency floor is your in-flight tool call's duration, which is much better than the old polling cadence.
 
 After **every** git commit you intend to keep:
 

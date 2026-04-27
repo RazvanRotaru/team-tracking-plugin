@@ -1,6 +1,6 @@
-import { buildAdapter } from "../index.js";
-import { loadConfig } from "../config/loader.js";
+import { type Config, loadConfig } from "../config/loader.js";
 import type { Event, TicketRef } from "../domain/types.js";
+import { buildAdapter } from "../index.js";
 import { Subscription, type SubscriptionScope } from "../server/subscription.js";
 
 type Args = Record<string, string | boolean>;
@@ -52,25 +52,23 @@ export async function runListen(argv: readonly string[]): Promise<number> {
   const since = typeof args.since === "string" ? args.since : undefined;
   const typesArg = typeof args.types === "string" ? args.types : null;
   const types = typesArg
-    ? (typesArg.split(",").map((s) => s.trim()).filter(Boolean) as ReadonlyArray<Event["type"]>)
+    ? (typesArg
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean) as ReadonlyArray<Event["type"]>)
     : undefined;
-  const timeoutMs =
-    typeof args["timeout-ms"] === "string" ? Number(args["timeout-ms"]) : 300_000;
+  const timeoutMs = typeof args["timeout-ms"] === "string" ? Number(args["timeout-ms"]) : 300_000;
 
-  let config;
+  let config: Config;
   try {
     config = await loadConfig();
   } catch (e) {
-    process.stdout.write(
-      `${JSON.stringify({ type: "error", reason: (e as Error).message })}\n`,
-    );
+    process.stdout.write(`${JSON.stringify({ type: "error", reason: (e as Error).message })}\n`);
     return 0;
   }
 
   const adapter = await buildAdapter(config);
-  const ticket: TicketRef | undefined = ticketId
-    ? { project, id: ticketId }
-    : undefined;
+  const ticket: TicketRef | undefined = ticketId ? { project, id: ticketId } : undefined;
   const scope: SubscriptionScope = { project, ticket };
   const sub = new Subscription(adapter, scope, { since, types, timeoutMs });
 

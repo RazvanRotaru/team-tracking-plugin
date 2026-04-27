@@ -86,6 +86,21 @@ const ReadMessagesSchema = {
   since: z.string().optional(),
 };
 
+const EventTypeSchema = z.enum([
+  "message",
+  "checkpoint",
+  "progress",
+  "log",
+  "status_change",
+  "lock_change",
+]);
+
+const ReadEventsSchema = {
+  ref: TicketRefSchema,
+  since: z.string().optional(),
+  types: z.array(EventTypeSchema).optional(),
+};
+
 type ToolResult = {
   content: Array<{ type: "text"; text: string }>;
   isError?: boolean;
@@ -249,10 +264,26 @@ export function registerTools(server: McpServer, service: TicketService): void {
     {
       description:
         "Read the steering message stream on a ticket, ordered by `at` ascending. " +
-        "Pass `since` (ISO-8601) to get only messages newer than that time — typical " +
-        "polling pattern for both orchestrator and executor.",
+        "Pass `since` (ISO-8601) to get only messages newer than that time. " +
+        "Convenience projection — `read_events` with types: ['message'] is equivalent.",
       inputSchema: ReadMessagesSchema,
     },
     async ({ ref, since }) => unwrap(await service.readMessages(ref, since)),
+  );
+
+  server.registerTool(
+    "read_events",
+    {
+      description:
+        "Read the unified append-only event log for a ticket. Returns events " +
+        "ordered by `at` ascending. Pass `since` (ISO-8601) to get only events " +
+        "newer than that time. Pass `types` to filter to a subset " +
+        "(message | checkpoint | progress | log | status_change | lock_change). " +
+        "For real-time delivery without polling, use the `team-tracking listen` " +
+        "CLI as a background bash process — it drains via this read on startup " +
+        "and streams new events via the adapter watcher.",
+      inputSchema: ReadEventsSchema,
+    },
+    async ({ ref, since, types }) => unwrap(await service.readEvents(ref, { since, types })),
   );
 }

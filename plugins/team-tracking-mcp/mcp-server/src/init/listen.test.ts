@@ -58,18 +58,14 @@ describe("listen CLI", () => {
     };
     await adapter.appendEvent(ref, ev);
 
-    const code = await runListen([
-      "--project",
-      "P",
-      "--ticket-id",
-      ref.id,
-      "--timeout-ms",
-      "500",
-    ]);
+    const code = await runListen(["--project", "P", "--ticket-id", ref.id, "--timeout-ms", "500"]);
 
     expect(code).toBe(0);
     const out = stdoutChunks.join("");
-    const lines = out.split("\n").filter(Boolean).map((l) => JSON.parse(l));
+    const lines = out
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l));
     const eventsLine = lines.find((l) => l.type === "events");
     expect(eventsLine).toBeDefined();
     expect(eventsLine.events.map((e: Event) => e.id)).toContain("evt_drain");
@@ -79,17 +75,13 @@ describe("listen CLI", () => {
     const adapter = new ObsidianKanbanAdapter(dir);
     await adapter.init({ vaultPath: dir });
     const ref = await adapter.createTicket("P", { type: "task", title: "T" });
-    const code = await runListen([
-      "--project",
-      "P",
-      "--ticket-id",
-      ref.id,
-      "--timeout-ms",
-      "200",
-    ]);
+    const code = await runListen(["--project", "P", "--ticket-id", ref.id, "--timeout-ms", "200"]);
     expect(code).toBe(0);
     const out = stdoutChunks.join("");
-    const lines = out.split("\n").filter(Boolean).map((l) => JSON.parse(l));
+    const lines = out
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l));
     expect(lines.at(-1)?.type).toBe("timeout");
   });
 
