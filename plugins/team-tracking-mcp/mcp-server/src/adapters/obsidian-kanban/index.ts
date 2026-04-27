@@ -1,3 +1,4 @@
+import * as fs from "node:fs";
 import * as path from "node:path";
 import { deriveLockState } from "../../domain/lock.js";
 import type {
@@ -10,7 +11,12 @@ import type {
   TicketSummaryDTO,
   UpdateDTO,
 } from "../../domain/types.js";
-import type { AdapterConfig, TrackerAdapter } from "../types.js";
+import type {
+  AdapterConfig,
+  TrackerAdapter,
+  WatcherCallback,
+  WatcherUnsubscribe,
+} from "../types.js";
 import {
   BOARD_COLUMNS,
   type CardChild,
@@ -574,5 +580,107 @@ export class ObsidianKanbanAdapter implements TrackerAdapter {
       out = out.filter((e) => allow.has(e.type));
     }
     return out;
+  }
+
+  async readProjectEvents(
+    project: string,
+    opts?: { since?: string; types?: ReadonlyArray<Event["type"]> },
+  ): Promise<Array<{ ref: TicketRef; event: Event }>> {
+    const out: Array<{ ref: TicketRef; event: Event }> = [];
+    await this.collectAllTicketRefs(project, async (ref) => {
+      const events = await this.readEvents(ref, opts);
+      for (const event of events) out.push({ ref, event });
+    });
+    out.sort((a, b) => a.event.at.localeCompare(b.event.at));
+    return out;
+  }
+
+  /**
+   * Watch every ticket file under the project directory and surface newly
+   * appended events. Bookkeeping: per-ticket cursor of the last `at` we've
+   * emitted, so re-reads don't double-emit. fs.watch fires on any change
+   * to a file or its directory; we re-parse and diff against the cursor.
+   *
+   * Lossy cases we accept for v1:
+   *  - File creation: the project-dir watcher fires on the new entry; we
+   *    handle it by re-scanning on every event.
+   *  - Editor swap-file moves (vim style): some editors rename in/out; the
+   *    watcher catches those as separate events on the parent dir.
+   */
+  async watch(project: string, callback: WatcherCallback): Promise<WatcherUnsubscribe> {
+    const projectRoot = this.projectDir(project);
+    const cursor = new Map<string, string>(); // ticket id → last seen `at`
+    let cancelled = false;
+
+    const emitNew = async (ref: TicketRef): Promise<void> => {
+      if (cancelled) return;
+      try {
+        const last = cursor.get(ref.id);
+        const events = await this.readEvents(ref, last ? { since: last } : undefined);
+        if (events.length === 0) return;
+        const newest = events[events.length - 1]?.at;
+        if (newest) cursor.set(ref.id, newest);
+        callback(ref, events);
+      } catch {
+        // Ignore parse errors during in-flight writes; next change picks up.
+      }
+    };
+
+    // Seed cursor from current state so we don't re-emit historical events.
+    await this.collectAllTicketRefs(project, async (ref) => {
+      const events = await this.readEvents(ref);
+      const newest = events[events.length - 1]?.at;
+      if (newest) cursor.set(ref.id, newest);
+    });
+
+    const watcher = fs.watch(projectRoot, { recursive: true }, (_eventType, filename) => {
+      if (cancelled || !filename) return;
+      if (!filename.endsWith("ticket.md")) return;
+      const ref = this.refFromFilename(project, filename);
+      if (!ref) return;
+      void emitNew(ref);
+    });
+
+    return async () => {
+      cancelled = true;
+      watcher.close();
+    };
+  }
+
+  /**
+   * Walk the project's ticket tree and call `visit` for each ticket.md
+   * found. Used by `readProjectEvents` and by `watch` to seed cursors.
+   */
+  private async collectAllTicketRefs(
+    project: string,
+    visit: (ref: TicketRef) => Promise<void>,
+  ): Promise<void> {
+    const root = this.projectDir(project);
+    const walk = async (dir: string, idPrefix: string): Promise<void> => {
+      const slugs = await listSubdirs(dir);
+      for (const slug of slugs) {
+        if (slug.startsWith(".")) continue;
+        const sub = path.join(dir, slug);
+        const id = idPrefix === "" ? slug : `${idPrefix}/${slug}`;
+        if (await pathExists(path.join(sub, "ticket.md"))) {
+          await visit({ project, id });
+        }
+        await walk(sub, id);
+      }
+    };
+    if (!(await pathExists(root))) return;
+    await walk(path.join(root, "tickets"), "tickets");
+  }
+
+  /**
+   * Convert a path relative to the project root (e.g.
+   * `tickets/foo/children/bar/ticket.md`) into a TicketRef. Returns null
+   * for paths that don't look like a ticket file.
+   */
+  private refFromFilename(project: string, relPath: string): TicketRef | null {
+    if (!relPath.endsWith("/ticket.md") && relPath !== "ticket.md") return null;
+    const id = relPath.slice(0, relPath.length - "/ticket.md".length);
+    if (id.length === 0) return null;
+    return { project, id };
   }
 }

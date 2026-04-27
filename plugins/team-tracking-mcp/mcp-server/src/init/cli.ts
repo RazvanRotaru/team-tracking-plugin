@@ -126,6 +126,18 @@ async function main(): Promise<void> {
     process.stdout.write(usage());
     return;
   }
+
+  if (first === "listen") {
+    const { runListen, listenUsage } = await import("./listen.js");
+    if (argv[1] === "--help" || argv[1] === "-h") {
+      process.stdout.write(listenUsage());
+      return;
+    }
+    const code = await runListen(argv.slice(1));
+    process.exitCode = code;
+    return;
+  }
+
   // Strip a leading literal "init" subcommand if present.
   const rest = first === "init" ? argv.slice(1) : argv;
 

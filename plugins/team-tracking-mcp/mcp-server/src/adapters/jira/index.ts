@@ -10,7 +10,12 @@ import type {
   TicketType,
   UpdateDTO,
 } from "../../domain/types.js";
-import type { AdapterConfig, TrackerAdapter } from "../types.js";
+import type {
+  AdapterConfig,
+  TrackerAdapter,
+  WatcherCallback,
+  WatcherUnsubscribe,
+} from "../types.js";
 import { readFenced, writeFenced } from "./fenced.js";
 import { type JiraAuth, type JiraIssue, JiraRest } from "./rest.js";
 import {
@@ -34,6 +39,11 @@ export type JiraAdapterParams = JiraAuth & {
   customFieldIds?: JiraAdapterCustomFieldIds;
   projects: Array<{ name: string; adapterProjectRef: string }>;
   fetchImpl?: typeof fetch;
+  /**
+   * Watch poll interval in milliseconds. Jira webhooks would replace this
+   * if/when a public receiver exists; for v1 the watcher is poll-based.
+   */
+  watchPollMs?: number;
 };
 
 const FENCED_KEYS = {
@@ -94,6 +104,7 @@ export class JiraAdapter implements TrackerAdapter {
   private readonly statusMapper: StatusMapper;
   private readonly customFieldIds: JiraAdapterCustomFieldIds;
   private readonly projects: Map<string, string>; // canonical name → Jira project key
+  private readonly watchPollMs: number;
 
   constructor(params: JiraAdapterParams) {
     this.rest = new JiraRest(
@@ -103,6 +114,7 @@ export class JiraAdapter implements TrackerAdapter {
     this.statusMapper = new StatusMapper(params.statusMap);
     this.customFieldIds = params.customFieldIds ?? {};
     this.projects = new Map(params.projects.map((p) => [p.name, p.adapterProjectRef]));
+    this.watchPollMs = params.watchPollMs ?? 10_000;
   }
 
   async init(_config: AdapterConfig): Promise<void> {
@@ -469,6 +481,61 @@ export class JiraAdapter implements TrackerAdapter {
       filtered = filtered.filter((e) => allow.has(e.type));
     }
     return filtered;
+  }
+
+  /**
+   * Poll-based watcher. Re-reads each board ticket's event comments at
+   * `watchPollMs` cadence and fires the callback for any newly-arrived
+   * events. v1 fallback for environments without a webhook receiver;
+   * a future revision should swap this for a Jira webhook handler.
+   */
+  async watch(project: string, callback: WatcherCallback): Promise<WatcherUnsubscribe> {
+    const cursor = new Map<string, string>(); // ticket id → last seen `at`
+    let cancelled = false;
+
+    // Seed cursors so we don't re-emit historical events.
+    const seedRefs = (await this.listBoard(project)).map((s) => s.ref);
+    for (const ref of seedRefs) {
+      try {
+        const events = await this.readEvents(ref);
+        const newest = events[events.length - 1]?.at;
+        if (newest) cursor.set(ref.id, newest);
+      } catch {
+        // Best-effort seed; failures resolve themselves on the next sweep.
+      }
+    }
+
+    const sweep = async (): Promise<void> => {
+      if (cancelled) return;
+      let refs: TicketRef[];
+      try {
+        refs = (await this.listBoard(project)).map((s) => s.ref);
+      } catch {
+        return;
+      }
+      for (const ref of refs) {
+        if (cancelled) return;
+        try {
+          const last = cursor.get(ref.id);
+          const events = await this.readEvents(ref, last ? { since: last } : undefined);
+          if (events.length === 0) continue;
+          const newest = events[events.length - 1]?.at;
+          if (newest) cursor.set(ref.id, newest);
+          callback(ref, events);
+        } catch {
+          // Skip; next sweep retries.
+        }
+      }
+    };
+
+    const interval = setInterval(() => {
+      void sweep();
+    }, this.watchPollMs);
+
+    return async () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
   }
 }
 
