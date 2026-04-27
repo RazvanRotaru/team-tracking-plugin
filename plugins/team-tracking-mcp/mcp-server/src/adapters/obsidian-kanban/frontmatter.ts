@@ -48,9 +48,10 @@ export function parseTicketFile(text: string): ParsedTicketFile {
   const childrenStart = idx(SECTION_CHILDREN);
   const steeringStart = idx(SECTION_STEERING);
   const logStart = idx(SECTION_LOG);
+  const eventsStart = idx(SECTION_EVENTS);
 
   // Body ends at the first section header that's present.
-  const sectionStarts = [childrenStart, steeringStart, logStart]
+  const sectionStarts = [childrenStart, steeringStart, logStart, eventsStart]
     .filter((i) => i !== -1)
     .sort((a, b) => a - b);
   const bodyEnd = sectionStarts.length > 0 ? (sectionStarts[0] ?? lines.length) : lines.length;
@@ -76,12 +77,21 @@ export function parseTicketFile(text: string): ParsedTicketFile {
     messages = parseSteeringSection(slice);
   }
 
-  return { frontmatter: fm, body, log: logLines, messages };
+  let events: Event[] = [];
+  if (eventsStart !== -1) {
+    const slice = lines.slice(eventsStart + 1, sectionEnd(eventsStart));
+    events = parseEventsSection(slice);
+  }
+
+  return { frontmatter: fm, body, log: logLines, messages, events };
 }
 
 /**
- * Render a ticket.md given frontmatter, body, child entries, log lines, and
- * steering messages. Children carry absolute vault-relative wiki-link targets.
+ * Render a ticket.md given frontmatter, body, child entries, log lines,
+ * steering messages, and the unified event log. Children carry absolute
+ * vault-relative wiki-link targets. The Events section is JSONL — one
+ * compact JSON object per line — so the file stays diff-friendly and the
+ * watcher can detect changes by line count.
  */
 export function renderTicketFile(args: {
   frontmatter: TicketFrontmatter;
@@ -89,6 +99,7 @@ export function renderTicketFile(args: {
   children: ReadonlyArray<{ linkTarget: string; slug: string; done: boolean }>;
   log: ReadonlyArray<string>;
   messages?: ReadonlyArray<Message>;
+  events?: ReadonlyArray<Event>;
 }): string {
   const fm = stringifyYaml(args.frontmatter, { lineWidth: 0 }).trimEnd();
   const parts = ["---", fm, "---", ""];
@@ -115,7 +126,44 @@ export function renderTicketFile(args: {
     for (const l of args.log) parts.push(l);
     parts.push("");
   }
+  if (args.events && args.events.length > 0) {
+    parts.push(SECTION_EVENTS, "");
+    parts.push("```jsonl");
+    for (const ev of args.events) parts.push(JSON.stringify(ev));
+    parts.push("```");
+    parts.push("");
+  }
   return `${parts.join("\n")}`;
+}
+
+/**
+ * Event log section. Each event is one line of JSON inside a fenced
+ * `jsonl` code block. The fence keeps Obsidian's renderer from trying to
+ * parse the JSON as markdown; lines outside the fence are ignored so a
+ * human can annotate above/below if they want.
+ */
+function parseEventsSection(sliceLines: string[]): Event[] {
+  const events: Event[] = [];
+  let inFence = false;
+  for (const raw of sliceLines) {
+    const line = raw.replace(/\s+$/, "");
+    if (line.startsWith("```")) {
+      inFence = !inFence;
+      continue;
+    }
+    if (!inFence) continue;
+    if (line.length === 0) continue;
+    try {
+      const parsed = JSON.parse(line) as Event;
+      if (parsed && typeof parsed === "object" && "type" in parsed && "id" in parsed) {
+        events.push(parsed);
+      }
+    } catch {
+      // Tolerate malformed lines — skip silently. A future migration may
+      // surface these via a warning channel.
+    }
+  }
+  return events;
 }
 
 /**

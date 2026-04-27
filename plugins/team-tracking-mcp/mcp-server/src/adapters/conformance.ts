@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { Lock, Message, TicketRef } from "../domain/types.js";
+import type { Event, Lock, Message, TicketRef } from "../domain/types.js";
 import type { TrackerAdapter } from "./types.js";
 
 export type ConformanceFixture = {
@@ -512,6 +512,111 @@ export function runConformance(name: string, makeFixture: () => Promise<Conforma
       });
       const all = await fx.adapter.readMessages(ref);
       expect(all[0]?.body).toBe(body);
+    });
+
+    // ── Event log ──────────────────────────────────────────────────────
+
+    it("readEvents returns [] for a new ticket", async () => {
+      const ref = await fx.adapter.createTicket(fx.project, { type: "task", title: "X" });
+      expect(await fx.adapter.readEvents(ref)).toEqual([]);
+    });
+
+    it("appendEvent → readEvents roundtrips a message event", async () => {
+      const ref = await fx.adapter.createTicket(fx.project, { type: "task", title: "X" });
+      const ev: Event = {
+        id: "evt_1",
+        at: "2026-04-25T10:00:00Z",
+        type: "message",
+        from: "orchestrator",
+        kind: "nudge",
+        body: "stay in scope",
+        in_reply_to: null,
+      };
+      await fx.adapter.appendEvent(ref, ev);
+      expect(await fx.adapter.readEvents(ref)).toEqual([ev]);
+    });
+
+    it("appendEvent preserves order across heterogeneous types", async () => {
+      const ref = await fx.adapter.createTicket(fx.project, { type: "task", title: "X" });
+      const events: Event[] = [
+        {
+          id: "evt_1",
+          at: "2026-04-25T10:00:00Z",
+          type: "lock_change",
+          action: "acquire",
+          owner: "alice",
+          recovered_from: null,
+          final_status: null,
+        },
+        {
+          id: "evt_2",
+          at: "2026-04-25T10:01:00Z",
+          type: "checkpoint",
+          by: "alice",
+          commit_id: "abc",
+          update: "u",
+          progress_summary: "ps",
+        },
+        {
+          id: "evt_3",
+          at: "2026-04-25T10:02:00Z",
+          type: "message",
+          from: "alice",
+          kind: "info",
+          body: "hi",
+          in_reply_to: null,
+        },
+      ];
+      for (const ev of events) await fx.adapter.appendEvent(ref, ev);
+      expect((await fx.adapter.readEvents(ref)).map((e) => e.id)).toEqual([
+        "evt_1",
+        "evt_2",
+        "evt_3",
+      ]);
+    });
+
+    it("readEvents `since` filters by `at`", async () => {
+      const ref = await fx.adapter.createTicket(fx.project, { type: "task", title: "X" });
+      const a: Event = {
+        id: "evt_a",
+        at: "2026-04-25T10:00:00Z",
+        type: "log",
+        by: null,
+        line: "first",
+      };
+      const b: Event = {
+        id: "evt_b",
+        at: "2026-04-25T10:05:00Z",
+        type: "log",
+        by: null,
+        line: "second",
+      };
+      await fx.adapter.appendEvent(ref, a);
+      await fx.adapter.appendEvent(ref, b);
+      const fresh = await fx.adapter.readEvents(ref, { since: "2026-04-25T10:02:00Z" });
+      expect(fresh.map((e) => e.id)).toEqual(["evt_b"]);
+    });
+
+    it("readEvents `types` filter narrows to a subset", async () => {
+      const ref = await fx.adapter.createTicket(fx.project, { type: "task", title: "X" });
+      await fx.adapter.appendEvent(ref, {
+        id: "evt_l",
+        at: "2026-04-25T10:00:00Z",
+        type: "log",
+        by: null,
+        line: "log",
+      });
+      await fx.adapter.appendEvent(ref, {
+        id: "evt_m",
+        at: "2026-04-25T10:01:00Z",
+        type: "message",
+        from: "orchestrator",
+        kind: "info",
+        body: "hi",
+        in_reply_to: null,
+      });
+      const onlyMessages = await fx.adapter.readEvents(ref, { types: ["message"] });
+      expect(onlyMessages.map((e) => e.id)).toEqual(["evt_m"]);
     });
 
     // ── Ref identity ───────────────────────────────────────────────────

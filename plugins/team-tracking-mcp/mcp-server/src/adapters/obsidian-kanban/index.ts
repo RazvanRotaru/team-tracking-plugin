@@ -2,6 +2,7 @@ import * as path from "node:path";
 import { deriveLockState } from "../../domain/lock.js";
 import type {
   CreateTicketDTO,
+  Event,
   Lock,
   Message,
   TicketDTO,
@@ -301,6 +302,7 @@ export class ObsidianKanbanAdapter implements TrackerAdapter {
       body: bodyText,
       children: [], // brand new — no children yet
       log: [],
+      events: [],
     });
     await ensureDir(this.ticketDir(ref));
     await writeFileAtomic(this.ticketFile(ref), text);
@@ -401,6 +403,7 @@ export class ObsidianKanbanAdapter implements TrackerAdapter {
       children: await this.collectChildEntries(parentRef),
       log: parsed.log,
       messages: parsed.messages,
+      events: parsed.events,
     });
     await writeFileAtomic(this.ticketFile(parentRef), text);
   }
@@ -444,6 +447,7 @@ export class ObsidianKanbanAdapter implements TrackerAdapter {
       children: await this.collectChildEntries(ref),
       log: parsed.log,
       messages: parsed.messages,
+      events: parsed.events,
     });
     await writeFileAtomic(this.ticketFile(ref), text);
 
@@ -479,6 +483,7 @@ export class ObsidianKanbanAdapter implements TrackerAdapter {
       children: await this.collectChildEntries(ref),
       log: parsed.log,
       messages: parsed.messages,
+      events: parsed.events,
     });
     await writeFileAtomic(this.ticketFile(ref), text);
   }
@@ -501,6 +506,7 @@ export class ObsidianKanbanAdapter implements TrackerAdapter {
       children: await this.collectChildEntries(ref),
       log: parsed.log,
       messages: parsed.messages,
+      events: parsed.events,
     });
     await writeFileAtomic(this.ticketFile(ref), text);
   }
@@ -515,6 +521,7 @@ export class ObsidianKanbanAdapter implements TrackerAdapter {
       children: await this.collectChildEntries(ref),
       log: [...parsed.log, stamped],
       messages: parsed.messages,
+      events: parsed.events,
     });
     await writeFileAtomic(this.ticketFile(ref), text);
   }
@@ -528,6 +535,7 @@ export class ObsidianKanbanAdapter implements TrackerAdapter {
       children: await this.collectChildEntries(ref),
       log: parsed.log,
       messages: [...parsed.messages, message],
+      events: parsed.events,
     });
     await writeFileAtomic(this.ticketFile(ref), text);
   }
@@ -537,5 +545,34 @@ export class ObsidianKanbanAdapter implements TrackerAdapter {
     if (!parsed) return [];
     const all = [...parsed.messages].sort((a, b) => a.at.localeCompare(b.at));
     return since ? all.filter((m) => m.at > since) : all;
+  }
+
+  async appendEvent(ref: TicketRef, event: Event): Promise<void> {
+    const parsed = await this.loadParsed(ref);
+    if (!parsed) throw new Error(`ticket not found: ${ref.id}`);
+    const text = renderTicketFile({
+      frontmatter: parsed.frontmatter,
+      body: parsed.body,
+      children: await this.collectChildEntries(ref),
+      log: parsed.log,
+      messages: parsed.messages,
+      events: [...parsed.events, event],
+    });
+    await writeFileAtomic(this.ticketFile(ref), text);
+  }
+
+  async readEvents(
+    ref: TicketRef,
+    opts?: { since?: string; types?: ReadonlyArray<Event["type"]> },
+  ): Promise<Event[]> {
+    const parsed = await this.loadParsed(ref);
+    if (!parsed) return [];
+    let out = [...parsed.events].sort((a, b) => a.at.localeCompare(b.at));
+    if (opts?.since) out = out.filter((e) => e.at > (opts.since as string));
+    if (opts?.types && opts.types.length > 0) {
+      const allow = new Set<Event["type"]>(opts.types);
+      out = out.filter((e) => allow.has(e.type));
+    }
+    return out;
   }
 }

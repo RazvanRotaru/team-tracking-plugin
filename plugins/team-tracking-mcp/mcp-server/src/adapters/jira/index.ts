@@ -1,6 +1,7 @@
 import { deriveLockState } from "../../domain/lock.js";
 import type {
   CreateTicketDTO,
+  Event,
   Lock,
   Message,
   TicketDTO,
@@ -433,6 +434,42 @@ export class JiraAdapter implements TrackerAdapter {
     out.sort((a, b) => a.at.localeCompare(b.at));
     return since ? out.filter((m) => m.at > since) : out;
   }
+
+  /**
+   * Unified event log: each event is stored as a Jira comment with a
+   * recognizable first line:
+   *
+   *   [event:<type>] <compact-json-payload>
+   *
+   * The `[event:` prefix is unmistakable, the type is inline for cheap
+   * filtering, and the JSON payload is the full Event so a future reader
+   * doesn't need to reconstruct anything from comment metadata.
+   */
+  async appendEvent(ref: TicketRef, event: Event): Promise<void> {
+    await this.rest.addComment(ref.id, formatEventComment(event));
+  }
+
+  async readEvents(
+    ref: TicketRef,
+    opts?: { since?: string; types?: ReadonlyArray<Event["type"]> },
+  ): Promise<Event[]> {
+    const { comments } = await this.rest.listComments(ref.id);
+    const out: Event[] = [];
+    for (const c of comments) {
+      const text = typeof c.body === "string" ? c.body : fromAdf(c.body);
+      const parsed = parseEventComment(text);
+      if (!parsed) continue;
+      out.push(parsed);
+    }
+    out.sort((a, b) => a.at.localeCompare(b.at));
+    let filtered = out;
+    if (opts?.since) filtered = filtered.filter((e) => e.at > (opts.since as string));
+    if (opts?.types && opts.types.length > 0) {
+      const allow = new Set<Event["type"]>(opts.types);
+      filtered = filtered.filter((e) => allow.has(e.type));
+    }
+    return filtered;
+  }
 }
 
 const STEERING_PREFIX = "STEERING";
@@ -484,4 +521,25 @@ function unescapeMeta(value: string): string {
 const FENCED_RE_ALL = /\n*<!--\s*tt:([a-z_]+)\s*-->[\s\S]*?<!--\s*\/tt:\1\s*-->\n*/g;
 function stripFencedAll(description: string): string {
   return description.replace(FENCED_RE_ALL, "\n").replace(/^\n+|\n+$/g, "");
+}
+
+const EVENT_PREFIX_RE = /^\[event:([a-z_]+)\]\s+/;
+
+function formatEventComment(event: Event): string {
+  return `[event:${event.type}] ${JSON.stringify(event)}`;
+}
+
+function parseEventComment(text: string): Event | null {
+  const m = text.match(EVENT_PREFIX_RE);
+  if (!m) return null;
+  const json = text.slice(m[0].length).trimEnd();
+  try {
+    const parsed = JSON.parse(json) as Event;
+    if (parsed && typeof parsed === "object" && "type" in parsed && "id" in parsed) {
+      return parsed;
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
