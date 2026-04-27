@@ -48,18 +48,19 @@ export interface TrackerAdapter {
   createTicket(project: string, draft: CreateTicketDTO): Promise<TicketRef>;
   updateTicket(ref: TicketRef, update: UpdateDTO): Promise<void>;
 
-  /** Persist the canonical lock cache alongside the corresponding event. */
+  /** Persist the canonical lock cache. The lock carries a token that has
+   * to live somewhere fast-readable; events alone aren't enough. */
   writeLock(ref: TicketRef, lock: Lock | null): Promise<void>;
-
-  /** Persist the canonical progress cache alongside the corresponding event. */
-  writeProgress(
-    ref: TicketRef,
-    progress: { update: string | null; progress_summary: string | null },
-  ): Promise<void>;
 
   /**
    * Append a single event to the ticket's append-only log. The server is
    * responsible for minting `id` and `at`; adapters store the record verbatim.
+   *
+   * For `checkpoint` and `progress` events, the adapter is also responsible
+   * for keeping the `update` / `progress_summary` cache fields in sync —
+   * the post-state is fully encoded in the event payload (events carry
+   * the new value, not just the delta), so the adapter writes both in the
+   * same persistence step.
    */
   appendEvent(ref: TicketRef, event: Event): Promise<void>;
 

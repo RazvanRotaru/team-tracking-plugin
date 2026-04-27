@@ -72,7 +72,6 @@ export async function runListen(argv: readonly string[]): Promise<number> {
   const scope: SubscriptionScope = { project, ticket };
   const sub = new Subscription(adapter, scope, { since, types, timeoutMs });
 
-  let printedAnything = false;
   const handleSigint = (): void => {
     sub.cancel();
   };
@@ -82,12 +81,7 @@ export async function runListen(argv: readonly string[]): Promise<number> {
   try {
     for await (const env of sub.stream()) {
       process.stdout.write(`${JSON.stringify(env)}\n`);
-      if (env.type === "events") {
-        printedAnything = true;
-        sub.cancel();
-        break;
-      }
-      if (env.type === "error") {
+      if (env.type === "events" || env.type === "error") {
         sub.cancel();
         break;
       }
@@ -98,13 +92,6 @@ export async function runListen(argv: readonly string[]): Promise<number> {
   } finally {
     process.off("SIGINT", handleSigint);
     process.off("SIGTERM", handleSigint);
-  }
-
-  // Exit code is informational only. Emit a timeout envelope if nothing
-  // arrived and the loop ended without one (defensive — Subscription should
-  // always end with timeout when no events arrived in the deadline).
-  if (!printedAnything) {
-    // The stream itself emits the timeout envelope; nothing to add here.
   }
   return 0;
 }

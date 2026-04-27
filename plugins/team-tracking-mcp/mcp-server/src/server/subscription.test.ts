@@ -58,6 +58,44 @@ describe("Subscription (Obsidian fs.watch)", () => {
     expect(collected.at(-1)?.type).toBe("timeout");
   });
 
+  it("project-wide drain groups events by ref, one envelope per ticket", async () => {
+    const refA = ref;
+    const refB = await adapter.createTicket("P", { type: "task", title: "Y" });
+    await adapter.appendEvent(refA, {
+      id: "evt_a1",
+      at: "2026-04-25T10:00:00Z",
+      type: "log",
+      by: null,
+      line: "from A",
+    });
+    await adapter.appendEvent(refB, {
+      id: "evt_b1",
+      at: "2026-04-25T10:01:00Z",
+      type: "log",
+      by: null,
+      line: "from B",
+    });
+    await adapter.appendEvent(refA, {
+      id: "evt_a2",
+      at: "2026-04-25T10:02:00Z",
+      type: "log",
+      by: null,
+      line: "from A again",
+    });
+
+    const sub = new Subscription(adapter, { project: "P" }, { timeoutMs: 200 });
+    const collected: SubscriptionEnvelope[] = [];
+    for await (const env of sub.stream()) collected.push(env);
+
+    const eventsEnvs = collected.filter(
+      (e): e is Extract<SubscriptionEnvelope, { type: "events" }> => e.type === "events",
+    );
+    // One envelope per ref, with the ref correctly attributed.
+    const byRef = new Map(eventsEnvs.map((e) => [e.ref.id, e.events.map((ev) => ev.id)]));
+    expect(byRef.get(refA.id)).toEqual(["evt_a1", "evt_a2"]);
+    expect(byRef.get(refB.id)).toEqual(["evt_b1"]);
+  });
+
   it("delivers a live event appended after subscribe via fs.watch", async () => {
     const sub = new Subscription(adapter, { project: "P", ticket: ref }, { timeoutMs: 5000 });
     const iter = sub.stream();

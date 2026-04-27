@@ -494,29 +494,6 @@ export class ObsidianKanbanAdapter implements TrackerAdapter {
     await writeFileAtomic(this.ticketFile(ref), text);
   }
 
-  async writeProgress(
-    ref: TicketRef,
-    progress: { update: string | null; progress_summary: string | null },
-  ): Promise<void> {
-    const parsed = await this.loadParsed(ref);
-    if (!parsed) throw new Error(`ticket not found: ${ref.id}`);
-    const fm: TicketFrontmatter = {
-      ...parsed.frontmatter,
-      update: progress.update,
-      progress_summary: progress.progress_summary,
-      updated: new Date().toISOString(),
-    };
-    const text = renderTicketFile({
-      frontmatter: fm,
-      body: parsed.body,
-      children: await this.collectChildEntries(ref),
-      log: parsed.log,
-      messages: parsed.messages,
-      events: parsed.events,
-    });
-    await writeFileAtomic(this.ticketFile(ref), text);
-  }
-
   async appendLog(ref: TicketRef, line: string): Promise<void> {
     const parsed = await this.loadParsed(ref);
     if (!parsed) throw new Error(`ticket not found: ${ref.id}`);
@@ -556,8 +533,21 @@ export class ObsidianKanbanAdapter implements TrackerAdapter {
   async appendEvent(ref: TicketRef, event: Event): Promise<void> {
     const parsed = await this.loadParsed(ref);
     if (!parsed) throw new Error(`ticket not found: ${ref.id}`);
+    // Cache maintenance: checkpoint and progress events carry post-state
+    // for the visible scalar fields; bump the frontmatter cache in the
+    // same write so getTicket sees a consistent snapshot without having
+    // to derive on every read.
+    let nextFm: TicketFrontmatter = parsed.frontmatter;
+    if (event.type === "checkpoint" || event.type === "progress") {
+      nextFm = {
+        ...nextFm,
+        update: event.update,
+        progress_summary: event.progress_summary,
+        updated: new Date().toISOString(),
+      };
+    }
     const text = renderTicketFile({
-      frontmatter: parsed.frontmatter,
+      frontmatter: nextFm,
       body: parsed.body,
       children: await this.collectChildEntries(ref),
       log: parsed.log,

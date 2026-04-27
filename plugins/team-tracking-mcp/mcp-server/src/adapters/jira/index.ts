@@ -25,6 +25,9 @@ import {
   PRIORITY_TO_JIRA,
   StatusMapper,
 } from "./status-map.js";
+import { type JiraWebhookReceiver, subscribeReceiver } from "./webhook.js";
+
+export { JiraWebhookReceiver } from "./webhook.js";
 
 export type JiraAdapterCustomFieldIds = {
   update?: string;
@@ -40,10 +43,17 @@ export type JiraAdapterParams = JiraAuth & {
   projects: Array<{ name: string; adapterProjectRef: string }>;
   fetchImpl?: typeof fetch;
   /**
-   * Watch poll interval in milliseconds. Jira webhooks would replace this
-   * if/when a public receiver exists; for v1 the watcher is poll-based.
+   * Polling interval for `watch()` when no webhook receiver is configured.
+   * Pure HTTP fallback; usually 5-15s is reasonable.
    */
   watchPollMs?: number;
+  /**
+   * Pre-started JiraWebhookReceiver. When provided, `watch()` registers
+   * with it for push delivery and skips polling entirely. The caller is
+   * responsible for the receiver's lifecycle (start/stop) — the adapter
+   * only subscribes/unsubscribes.
+   */
+  webhookReceiver?: JiraWebhookReceiver;
 };
 
 const FENCED_KEYS = {
@@ -105,6 +115,7 @@ export class JiraAdapter implements TrackerAdapter {
   private readonly customFieldIds: JiraAdapterCustomFieldIds;
   private readonly projects: Map<string, string>; // canonical name → Jira project key
   private readonly watchPollMs: number;
+  private readonly webhookReceiver: JiraWebhookReceiver | null;
 
   constructor(params: JiraAdapterParams) {
     this.rest = new JiraRest(
@@ -115,6 +126,7 @@ export class JiraAdapter implements TrackerAdapter {
     this.customFieldIds = params.customFieldIds ?? {};
     this.projects = new Map(params.projects.map((p) => [p.name, p.adapterProjectRef]));
     this.watchPollMs = params.watchPollMs ?? 10_000;
+    this.webhookReceiver = params.webhookReceiver ?? null;
   }
 
   async init(_config: AdapterConfig): Promise<void> {
@@ -408,17 +420,6 @@ export class JiraAdapter implements TrackerAdapter {
     });
   }
 
-  async writeProgress(
-    ref: TicketRef,
-    progress: { update: string | null; progress_summary: string | null },
-  ): Promise<void> {
-    const issue = await this.rest.getIssue(ref.id);
-    await this.writeFields(ref.id, issue, {
-      update: progress.update,
-      progress_summary: progress.progress_summary,
-    });
-  }
-
   async appendLog(ref: TicketRef, line: string): Promise<void> {
     await this.rest.addComment(ref.id, line);
   }
@@ -459,6 +460,17 @@ export class JiraAdapter implements TrackerAdapter {
    */
   async appendEvent(ref: TicketRef, event: Event): Promise<void> {
     await this.rest.addComment(ref.id, formatEventComment(event));
+    // Cache maintenance: checkpoint and progress events carry the
+    // post-state for the visible scalar fields. Update the cache (custom
+    // fields or fenced description) so getTicket doesn't have to read
+    // the full comment list to derive `update` / `progress_summary`.
+    if (event.type === "checkpoint" || event.type === "progress") {
+      const issue = await this.rest.getIssue(ref.id);
+      await this.writeFields(ref.id, issue, {
+        update: event.update,
+        progress_summary: event.progress_summary,
+      });
+    }
   }
 
   async readEvents(
@@ -484,12 +496,47 @@ export class JiraAdapter implements TrackerAdapter {
   }
 
   /**
-   * Poll-based watcher. Re-reads each board ticket's event comments at
-   * `watchPollMs` cadence and fires the callback for any newly-arrived
-   * events. v1 fallback for environments without a webhook receiver;
-   * a future revision should swap this for a Jira webhook handler.
+   * Watch for events. Two modes:
+   *
+   * 1. **Webhook receiver** (push, low-latency): when a `webhookReceiver`
+   *    was passed in `JiraAdapterParams`, the adapter subscribes to it and
+   *    fires the callback for every `comment_created` payload whose body
+   *    parses as an event. The caller owns the receiver's HTTP lifecycle
+   *    (port binding, Jira-side webhook configuration). This is the
+   *    real-time path.
+   *
+   * 2. **Polling fallback**: when no receiver is configured, the adapter
+   *    polls each board ticket's comments at `watchPollMs` cadence and
+   *    diffs against a per-issue cursor. Higher latency floor, but works
+   *    in any deployment without a public-reachable HTTP endpoint.
    */
   async watch(project: string, callback: WatcherCallback): Promise<WatcherUnsubscribe> {
+    if (this.webhookReceiver) {
+      const projectKey = this.projects.get(project);
+      const isProjectIssue = (issueKey: string): boolean => {
+        if (!projectKey) return false;
+        // Jira issue keys are `<PROJECT>-<n>` (e.g. ACME-42). Match the
+        // prefix so we ignore events for issues outside this adapter's
+        // configured projects.
+        return issueKey.startsWith(`${projectKey}-`);
+      };
+      const unsubscribe = subscribeReceiver(
+        this.webhookReceiver,
+        project,
+        isProjectIssue,
+        callback,
+      );
+      return async () => {
+        unsubscribe();
+      };
+    }
+    return this.watchPolling(project, callback);
+  }
+
+  private async watchPolling(
+    project: string,
+    callback: WatcherCallback,
+  ): Promise<WatcherUnsubscribe> {
     const cursor = new Map<string, string>(); // ticket id → last seen `at`
     let cancelled = false;
 

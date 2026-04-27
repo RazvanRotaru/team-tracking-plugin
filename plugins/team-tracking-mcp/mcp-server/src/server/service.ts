@@ -198,19 +198,23 @@ export class TicketService {
     return this.mutex.withLock(ref, async () => {
       const current = await this.adapter.getTicket(ref);
       if (!current) return err(domainErr("ENOTFOUND", `ticket ${ref.id} not found`));
+      // Compose post-state: an unspecified field carries forward the
+      // current value, an explicitly-null field clears it. This is the
+      // value the cache must reflect after the call, so it's also what
+      // the event records.
+      const newUpdate = args.update !== undefined ? args.update : (current.update ?? null);
+      const newProgressSummary =
+        args.progress_summary !== undefined
+          ? args.progress_summary
+          : (current.progress_summary ?? null);
       const r = checkpoint(current.lock, args.lock_token, {
         commit_id: args.commit_id,
-        update: args.update ?? null,
-        progress_summary: args.progress_summary ?? null,
+        update: newUpdate,
+        progress_summary: newProgressSummary,
         at: this.opts.now(),
       });
       if (!r.ok) return r;
       await this.adapter.writeLock(ref, r.value);
-      // The visible TicketDTO progress fields mirror the latest checkpoint.
-      await this.adapter.writeProgress(ref, {
-        update: args.update ?? current.update ?? null,
-        progress_summary: args.progress_summary ?? current.progress_summary ?? null,
-      });
 
       const owner = current.lock?.owner ?? "";
       const ev = this.mintEvent();
@@ -219,8 +223,8 @@ export class TicketService {
         type: "checkpoint",
         by: owner,
         commit_id: args.commit_id,
-        update: args.update ?? null,
-        progress_summary: args.progress_summary ?? null,
+        update: newUpdate,
+        progress_summary: newProgressSummary,
       });
       return ok(undefined);
     });
@@ -281,12 +285,13 @@ export class TicketService {
         if (!sv.ok) return sv;
         await this.adapter.updateTicket(ref, { status: args.status });
       }
-      if (args.update !== undefined || args.progress_summary !== undefined) {
-        await this.adapter.writeProgress(ref, {
-          update: args.update ?? current.update ?? null,
-          progress_summary: args.progress_summary ?? current.progress_summary ?? null,
-        });
-      }
+      // Compose post-state for update / progress_summary so the event
+      // records what the cache should look like after this call.
+      const newUpdate = args.update !== undefined ? args.update : (current.update ?? null);
+      const newProgressSummary =
+        args.progress_summary !== undefined
+          ? args.progress_summary
+          : (current.progress_summary ?? null);
 
       // One progress event per call captures the visible-field deltas.
       const ev = this.mintEvent();
@@ -295,8 +300,8 @@ export class TicketService {
         type: "progress",
         by: owner,
         status: args.status ?? null,
-        update: args.update ?? null,
-        progress_summary: args.progress_summary ?? null,
+        update: newUpdate,
+        progress_summary: newProgressSummary,
       });
       if (args.status !== undefined && args.status !== wasStatus) {
         const evSt = this.mintEvent();
