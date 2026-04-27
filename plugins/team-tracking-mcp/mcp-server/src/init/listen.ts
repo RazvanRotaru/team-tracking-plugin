@@ -67,10 +67,10 @@ export async function runListen(argv: readonly string[]): Promise<number> {
     return 0;
   }
 
-  const adapter = await buildAdapter(config);
+  const built = await buildAdapter(config);
   const ticket: TicketRef | undefined = ticketId ? { project, id: ticketId } : undefined;
   const scope: SubscriptionScope = { project, ticket };
-  const sub = new Subscription(adapter, scope, { since, types, timeoutMs });
+  const sub = new Subscription(built.adapter, scope, { since, types, timeoutMs });
 
   const handleSigint = (): void => {
     sub.cancel();
@@ -92,6 +92,7 @@ export async function runListen(argv: readonly string[]): Promise<number> {
   } finally {
     process.off("SIGINT", handleSigint);
     process.off("SIGTERM", handleSigint);
+    await built.dispose();
   }
   return 0;
 }

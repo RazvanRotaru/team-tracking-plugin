@@ -93,10 +93,18 @@ const EventTypeSchema = z.enum([
   "log",
   "status_change",
   "lock_change",
+  "created",
+  "fields_change",
 ]);
 
 const ReadEventsSchema = {
   ref: TicketRefSchema,
+  since: z.string().optional(),
+  types: z.array(EventTypeSchema).optional(),
+};
+
+const ReadProjectEventsSchema = {
+  project: z.string().min(1),
   since: z.string().optional(),
   types: z.array(EventTypeSchema).optional(),
 };
@@ -278,12 +286,26 @@ export function registerTools(server: McpServer, service: TicketService): void {
         "Read the unified append-only event log for a ticket. Returns events " +
         "ordered by `at` ascending. Pass `since` (ISO-8601) to get only events " +
         "newer than that time. Pass `types` to filter to a subset " +
-        "(message | checkpoint | progress | log | status_change | lock_change). " +
-        "For real-time delivery without polling, use the `team-tracking listen` " +
-        "CLI as a background bash process — it drains via this read on startup " +
-        "and streams new events via the adapter watcher.",
+        "(message | checkpoint | progress | log | status_change | lock_change | " +
+        "created | fields_change). For real-time delivery without polling, use " +
+        "the `team-tracking listen` CLI as a background bash process — it drains " +
+        "via this read on startup and streams new events via the adapter watcher.",
       inputSchema: ReadEventsSchema,
     },
     async ({ ref, since, types }) => unwrap(await service.readEvents(ref, { since, types })),
+  );
+
+  server.registerTool(
+    "read_project_events",
+    {
+      description:
+        "Read events across every ticket in a project, ordered by `at` ascending. " +
+        "Each result is `{ ref, event }`. Use this for project-wide audit dumps " +
+        "or to seed a `--since` cursor for the listen CLI. For live delivery, " +
+        "prefer the listen CLI — this is a one-shot bulk read.",
+      inputSchema: ReadProjectEventsSchema,
+    },
+    async ({ project, since, types }) =>
+      ok(await service.readProjectEvents(project, { since, types })),
   );
 }

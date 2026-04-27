@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { JiraAdapter } from "./adapters/jira/index.js";
+import { JiraAdapter, JiraWebhookReceiver } from "./adapters/jira/index.js";
 import { ObsidianKanbanAdapter } from "./adapters/obsidian-kanban/index.js";
 import type { TrackerAdapter } from "./adapters/types.js";
 import { type Config, loadConfig } from "./config/loader.js";
@@ -11,23 +11,46 @@ import { registerTools } from "./server/tools.js";
 
 export const VERSION = "0.0.1";
 
-export async function buildAdapter(config: Config): Promise<TrackerAdapter> {
+/**
+ * Adapter plus auxiliary lifecycle resources (currently the optional
+ * Jira webhook receiver). Callers MUST call `dispose` on shutdown —
+ * otherwise the HTTP server keeps the process alive.
+ */
+export type BuiltAdapter = {
+  adapter: TrackerAdapter;
+  dispose: () => Promise<void>;
+};
+
+export async function buildAdapter(config: Config): Promise<BuiltAdapter> {
   if (config.adapter === "obsidian-kanban") {
     const a = new ObsidianKanbanAdapter(config.adapterConfig.vaultPath);
     await a.init(config.adapterConfig);
-    return a;
+    return { adapter: a, dispose: async () => {} };
   }
   if (config.adapter === "jira") {
+    const cfg = config.adapterConfig;
+    let receiver: JiraWebhookReceiver | null = null;
+    if (cfg.webhookPort) {
+      receiver = new JiraWebhookReceiver();
+      await receiver.start(cfg.webhookPort, cfg.webhookHost ?? "127.0.0.1");
+    }
     const a = new JiraAdapter({
-      baseUrl: config.adapterConfig.baseUrl,
-      email: config.adapterConfig.email,
-      apiToken: config.adapterConfig.apiToken,
-      statusMap: config.adapterConfig.statusMap,
-      customFieldIds: config.adapterConfig.customFieldIds,
+      baseUrl: cfg.baseUrl,
+      email: cfg.email,
+      apiToken: cfg.apiToken,
+      statusMap: cfg.statusMap,
+      customFieldIds: cfg.customFieldIds,
       projects: config.projects,
+      watchPollMs: cfg.watchPollMs,
+      webhookReceiver: receiver ?? undefined,
     });
     await a.init({});
-    return a;
+    return {
+      adapter: a,
+      dispose: async () => {
+        if (receiver) await receiver.stop();
+      },
+    };
   }
   throw new Error("unknown adapter type");
 }
@@ -51,9 +74,19 @@ export function buildServer(adapter: TrackerAdapter, ttlSeconds: number): McpSer
 
 export async function main(): Promise<void> {
   const config = await loadConfig();
-  const adapter = await buildAdapter(config);
-  const server = buildServer(adapter, config.lockTtlSeconds);
+  const built = await buildAdapter(config);
+  const server = buildServer(built.adapter, config.lockTtlSeconds);
   const transport = new StdioServerTransport();
+  const shutdown = async (): Promise<void> => {
+    await built.dispose();
+    process.exit(0);
+  };
+  process.on("SIGINT", () => {
+    void shutdown();
+  });
+  process.on("SIGTERM", () => {
+    void shutdown();
+  });
   await server.connect(transport);
 }
 

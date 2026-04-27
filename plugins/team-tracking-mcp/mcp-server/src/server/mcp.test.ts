@@ -55,6 +55,7 @@ describe("MCP wiring (in-memory transport)", () => {
         "post_message",
         "read_events",
         "read_messages",
+        "read_project_events",
         "release_ticket",
         "report_progress",
         "update_ticket",

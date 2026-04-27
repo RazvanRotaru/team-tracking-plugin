@@ -141,6 +141,59 @@ describe("TicketService (Obsidian-backed)", () => {
     expect(b.error.kind).toBe("ELOCKED");
   });
 
+  it("create_ticket emits a `created` event capturing the resolved initial state", async () => {
+    const t = await service.createTicket("P", {
+      type: "task",
+      title: "T",
+      priority: "P0",
+      labels: ["x", "y"],
+      scope: "auth",
+    });
+    if (!t.ok) throw new Error("setup");
+    const evs = await service.readEvents(t.value);
+    if (!evs.ok) throw new Error("readEvents");
+    const created = evs.value.find((e) => e.type === "created");
+    expect(created).toBeDefined();
+    if (created?.type !== "created") return;
+    expect(created.ticket_type).toBe("task");
+    expect(created.title).toBe("T");
+    expect(created.priority).toBe("P0");
+    expect(created.labels).toEqual(["x", "y"]);
+    expect(created.scope).toBe("auth");
+  });
+
+  it("update_ticket emits a fields_change event for non-status edits", async () => {
+    const t = await service.createTicket("P", { type: "task", title: "old" });
+    if (!t.ok) throw new Error("setup");
+    nowMs += 1000;
+    const r = await service.updateTicket(t.value, {
+      title: "new",
+      priority: "P0",
+      labels: ["a", "b"],
+    });
+    expect(r.ok).toBe(true);
+    const evs = await service.readEvents(t.value);
+    if (!evs.ok) throw new Error("readEvents");
+    const fc = evs.value.find((e) => e.type === "fields_change");
+    expect(fc).toBeDefined();
+    if (fc?.type !== "fields_change") return;
+    expect(fc.changes.title).toEqual({ from: "old", to: "new" });
+    expect(fc.changes.priority).toEqual({ from: "P2", to: "P0" });
+    expect(fc.changes.labels).toEqual({ from: [], to: ["a", "b"] });
+  });
+
+  it("update_ticket with only status changes emits status_change but no fields_change", async () => {
+    const t = await service.createTicket("P", { type: "task", title: "T" });
+    if (!t.ok) throw new Error("setup");
+    nowMs += 1000;
+    await service.updateTicket(t.value, { status: "Todo" });
+    const evs = await service.readEvents(t.value);
+    if (!evs.ok) throw new Error("readEvents");
+    const types = evs.value.map((e) => e.type);
+    expect(types).toContain("status_change");
+    expect(types).not.toContain("fields_change");
+  });
+
   it("stale lock TTL → second acquire succeeds with recovered_checkpoint", async () => {
     const t = await service.createTicket("P", { type: "task", title: "T" });
     if (!t.ok) throw new Error("setup");

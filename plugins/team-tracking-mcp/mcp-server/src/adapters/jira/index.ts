@@ -496,6 +496,27 @@ export class JiraAdapter implements TrackerAdapter {
   }
 
   /**
+   * Project-wide event sweep. Walks every board ticket and concatenates
+   * its event log. Filters apply post-aggregation. O(N tickets ×
+   * comments-per-ticket) — fine for small projects, expensive on large
+   * ones. The push path (`watch` with a webhook receiver) is the right
+   * answer for live use; this method is for one-shot audit dumps.
+   */
+  async readProjectEvents(
+    project: string,
+    opts?: { since?: string; types?: ReadonlyArray<Event["type"]> },
+  ): Promise<Array<{ ref: TicketRef; event: Event }>> {
+    const summaries = await this.listBoard(project);
+    const out: Array<{ ref: TicketRef; event: Event }> = [];
+    for (const s of summaries) {
+      const events = await this.readEvents(s.ref, opts);
+      for (const event of events) out.push({ ref: s.ref, event });
+    }
+    out.sort((a, b) => a.event.at.localeCompare(b.event.at));
+    return out;
+  }
+
+  /**
    * Watch for events. Two modes:
    *
    * 1. **Webhook receiver** (push, low-latency): when a `webhookReceiver`

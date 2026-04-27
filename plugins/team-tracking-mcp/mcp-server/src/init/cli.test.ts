@@ -35,6 +35,38 @@ describe("runHeadlessInit", () => {
     expect(loaded.projects[0]?.name).toBe("Acme");
   });
 
+  it("writes a jira config with the webhook port + host + poll-ms when flagged", async () => {
+    const target = path.join(dir, ".team-tracking", "config.json");
+    await runHeadlessInit([
+      "--adapter",
+      "jira",
+      "--jira-base-url",
+      "https://acme.atlassian.net",
+      "--jira-email",
+      "user@acme.com",
+      "--jira-api-token",
+      "secret",
+      "--jira-webhook-port",
+      "9876",
+      "--jira-webhook-host",
+      "0.0.0.0",
+      "--jira-watch-poll-ms",
+      "5000",
+      "--project",
+      "Acme",
+      "--project-ref",
+      "ACME",
+      "--config",
+      target,
+      "--no-gitignore",
+    ]);
+    const loaded = await loadConfig(target);
+    if (loaded.adapter !== "jira") throw new Error("expected jira");
+    expect(loaded.adapterConfig.webhookPort).toBe(9876);
+    expect(loaded.adapterConfig.webhookHost).toBe("0.0.0.0");
+    expect(loaded.adapterConfig.watchPollMs).toBe(5000);
+  });
+
   it("writes a valid jira config", async () => {
     const target = path.join(dir, ".team-tracking", "config.json");
     const r = await runHeadlessInit([

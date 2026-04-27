@@ -123,7 +123,9 @@ export type EventType =
   | "progress"
   | "log"
   | "status_change"
-  | "lock_change";
+  | "lock_change"
+  | "created"
+  | "fields_change";
 
 type EventBase = {
   id: string; // server-minted, e.g. "evt_<uuid>"
@@ -177,13 +179,45 @@ export type LockChangeEvent = EventBase & {
   final_status: string | null; // for "release", the status set on release
 };
 
+/**
+ * Bookkeeping event recorded the moment a ticket is created. Captures the
+ * shape callers care about for audit replay (type, parent, title, initial
+ * priority and status). Always the first event in a ticket's log.
+ */
+export type CreatedEvent = EventBase & {
+  type: "created";
+  ticket_type: TicketType;
+  parent: TicketRef | null;
+  title: string;
+  status: string;
+  priority: Priority;
+  labels: string[];
+  scope: string | null;
+};
+
+/**
+ * Non-status field updates from `update_ticket`. Status flips have a
+ * dedicated `status_change` event because they're tied to the lock state
+ * machine; everything else (title, body, priority, labels, scope, branch,
+ * pr_url) lands here as a generic from/to diff per changed field. `body`
+ * is summarized as a length delta to keep the event log compact — the
+ * full body is recoverable via the ticket itself.
+ */
+export type FieldsChangeEvent = EventBase & {
+  type: "fields_change";
+  by: string | null;
+  changes: Record<string, { from: unknown; to: unknown }>;
+};
+
 export type Event =
   | MessageEvent
   | CheckpointEvent
   | ProgressEvent
   | LogEvent
   | StatusChangeEvent
-  | LockChangeEvent;
+  | LockChangeEvent
+  | CreatedEvent
+  | FieldsChangeEvent;
 
 export type AllowedStatuses = Record<TicketType, readonly string[]>;
 

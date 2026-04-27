@@ -102,6 +102,29 @@ export class TicketService {
     return ok(await this.adapter.readEvents(ref, opts));
   }
 
+  /**
+   * Project-wide event read. Returns `{ ref, event }` pairs ordered by
+   * `at`. Adapters that implement `readProjectEvents` natively get a
+   * single fast path; otherwise we fall back to listBoard + per-ticket
+   * reads (correctness preserved, performance degraded).
+   */
+  async readProjectEvents(
+    project: string,
+    opts?: { since?: string; types?: ReadonlyArray<Event["type"]> },
+  ): Promise<Array<{ ref: TicketRef; event: Event }>> {
+    if (this.adapter.readProjectEvents) {
+      return this.adapter.readProjectEvents(project, opts);
+    }
+    const summaries = await this.adapter.listBoard(project);
+    const out: Array<{ ref: TicketRef; event: Event }> = [];
+    for (const s of summaries) {
+      const events = await this.adapter.readEvents(s.ref, opts);
+      for (const event of events) out.push({ ref: s.ref, event });
+    }
+    out.sort((a, b) => a.event.at.localeCompare(b.event.at));
+    return out;
+  }
+
   // ── orchestrator writes ────────────────────────────────────────────
 
   async createTicket(
@@ -115,6 +138,23 @@ export class TicketService {
     const v = validateCreate({ type: draft.type }, parent ? { type: parent.type } : null);
     if (!v.ok) return v;
     const ref = await this.adapter.createTicket(project, draft);
+    // Read the newly-created ticket to capture the adapter-resolved
+    // initial status / priority (defaults vary per adapter).
+    const created = await this.adapter.getTicket(ref);
+    if (created) {
+      const ev = this.mintEvent();
+      await this.record(ref, {
+        ...ev,
+        type: "created",
+        ticket_type: created.type,
+        parent: created.parent,
+        title: created.title,
+        status: created.status,
+        priority: created.priority,
+        labels: created.labels,
+        scope: created.scope,
+      });
+    }
     return ok(ref);
   }
 
@@ -138,6 +178,19 @@ export class TicketService {
           by: null,
           from_status: wasStatus,
           to_status: update.status,
+        });
+      }
+      // Non-status field changes flow through fields_change so the audit
+      // log captures every metadata edit. Status is excluded — it has its
+      // own event tied to the lock state machine.
+      const fieldChanges = computeFieldChanges(current, update);
+      if (Object.keys(fieldChanges).length > 0) {
+        const ev = this.mintEvent();
+        await this.record(ref, {
+          ...ev,
+          type: "fields_change",
+          by: null,
+          changes: fieldChanges,
         });
       }
       return ok(undefined);
@@ -373,4 +426,47 @@ export class TicketService {
     if (!current) return err(domainErr("ENOTFOUND", `ticket ${ref.id} not found`));
     return ok(await this.adapter.readMessages(ref, since));
   }
+}
+
+/**
+ * Compute a per-field diff for non-status updates. `body` is reduced to a
+ * length delta (full body lives on the ticket; bloating the audit log
+ * with every word change of a 5KB description isn't useful).
+ */
+function computeFieldChanges(
+  current: TicketDTO,
+  update: UpdateDTO,
+): Record<string, { from: unknown; to: unknown }> {
+  const out: Record<string, { from: unknown; to: unknown }> = {};
+  if (update.title !== undefined && update.title !== current.title) {
+    out.title = { from: current.title, to: update.title };
+  }
+  if (update.body !== undefined && update.body !== current.body) {
+    out.body = {
+      from: { length: current.body.length },
+      to: { length: update.body.length },
+    };
+  }
+  if (update.priority !== undefined && update.priority !== current.priority) {
+    out.priority = { from: current.priority, to: update.priority };
+  }
+  if (update.labels !== undefined && !arraysEqual(update.labels, current.labels)) {
+    out.labels = { from: current.labels, to: update.labels };
+  }
+  if (update.scope !== undefined && update.scope !== current.scope) {
+    out.scope = { from: current.scope, to: update.scope };
+  }
+  if (update.branch !== undefined && update.branch !== current.branch) {
+    out.branch = { from: current.branch, to: update.branch };
+  }
+  if (update.pr_url !== undefined && update.pr_url !== current.pr_url) {
+    out.pr_url = { from: current.pr_url, to: update.pr_url };
+  }
+  return out;
+}
+
+function arraysEqual<T>(a: ReadonlyArray<T>, b: ReadonlyArray<T>): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
 }
