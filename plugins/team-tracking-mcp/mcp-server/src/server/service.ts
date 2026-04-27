@@ -12,6 +12,7 @@ import type {
   Checkpoint,
   CommitCheckpointDTO,
   CreateTicketDTO,
+  Event,
   Message,
   PostMessageDTO,
   ReportProgressDTO,
@@ -27,6 +28,7 @@ export type ServiceOptions = {
   now: () => string;
   mintToken: () => string;
   mintMessageId: () => string;
+  mintEventId: () => string;
 };
 
 export type AcquireResultDTO = {
@@ -34,18 +36,48 @@ export type AcquireResultDTO = {
   recovered_checkpoint: Checkpoint | null;
 };
 
+/** Hook for the broker to receive every event the service emits. */
+export type EventEmitter = (ref: TicketRef, event: Event) => void;
+
 /**
  * Tool-level orchestration. Each method:
  *   1. Loads current state via the adapter.
  *   2. Runs domain invariants / lock state machine on a pure value.
  *   3. Persists the result through the adapter inside the per-ref mutex.
+ *   4. Appends one or more events to the ticket's append-only log.
+ *   5. Notifies the broker so subscribers see the events live.
+ *
+ * Steps (3) and (4) are not transactional — they run sequentially under the
+ * per-ref mutex. Crash-recovery: the event log is the audit-canonical
+ * surface; the cached scalar fields can be rebuilt from it.
  */
 export class TicketService {
+  private emitters: EventEmitter[] = [];
+
   constructor(
     private readonly adapter: TrackerAdapter,
     private readonly mutex: RefMutex,
     private readonly opts: ServiceOptions,
   ) {}
+
+  onEvent(emitter: EventEmitter): void {
+    this.emitters.push(emitter);
+  }
+
+  private mintEvent(): { id: string; at: string } {
+    return { id: this.opts.mintEventId(), at: this.opts.now() };
+  }
+
+  private async record(ref: TicketRef, event: Event): Promise<void> {
+    await this.adapter.appendEvent(ref, event);
+    for (const e of this.emitters) {
+      try {
+        e(ref, event);
+      } catch {
+        // Emitters must never throw — broker is best-effort.
+      }
+    }
+  }
 
   // ── reads ──────────────────────────────────────────────────────────
 
@@ -59,6 +91,15 @@ export class TicketService {
 
   listChildren(ref: TicketRef): Promise<TicketDTO[]> {
     return this.adapter.listChildren(ref);
+  }
+
+  async readEvents(
+    ref: TicketRef,
+    opts?: { since?: string; types?: ReadonlyArray<Event["type"]> },
+  ): Promise<Result<Event[], DomainError>> {
+    const current = await this.adapter.getTicket(ref);
+    if (!current) return err(domainErr("ENOTFOUND", `ticket ${ref.id} not found`));
+    return ok(await this.adapter.readEvents(ref, opts));
   }
 
   // ── orchestrator writes ────────────────────────────────────────────
@@ -87,7 +128,18 @@ export class TicketService {
         const sv = validateStatusForType(current.type, update.status);
         if (!sv.ok) return sv;
       }
+      const wasStatus = current.status;
       await this.adapter.updateTicket(ref, update);
+      if (update.status !== undefined && update.status !== wasStatus) {
+        const ev = this.mintEvent();
+        await this.record(ref, {
+          ...ev,
+          type: "status_change",
+          by: null,
+          from_status: wasStatus,
+          to_status: update.status,
+        });
+      }
       return ok(undefined);
     });
   }
@@ -105,11 +157,31 @@ export class TicketService {
       const r = acquire(current.lock, owner, token, this.opts.now(), this.opts.ttlSeconds);
       if (!r.ok) return r;
       await this.adapter.writeLock(ref, r.value.nextLock);
+
+      const recovered = r.value.recoveredCheckpoint;
+      const ev = this.mintEvent();
+      await this.record(ref, {
+        ...ev,
+        type: "lock_change",
+        action: recovered ? "recover" : "acquire",
+        owner,
+        recovered_from: recovered ? (current.lock?.owner ?? null) : null,
+        final_status: null,
+      });
+
       // Per design: bump status from Todo → In Progress on acquisition.
       if (current.status === "Todo") {
         const sv = validateStatusForType(current.type, "In Progress");
         if (sv.ok) {
           await this.adapter.updateTicket(ref, { status: "In Progress" });
+          const ev2 = this.mintEvent();
+          await this.record(ref, {
+            ...ev2,
+            type: "status_change",
+            by: owner,
+            from_status: "Todo",
+            to_status: "In Progress",
+          });
         }
       }
       return ok({
@@ -139,6 +211,17 @@ export class TicketService {
         update: args.update ?? current.update ?? null,
         progress_summary: args.progress_summary ?? current.progress_summary ?? null,
       });
+
+      const owner = current.lock?.owner ?? "";
+      const ev = this.mintEvent();
+      await this.record(ref, {
+        ...ev,
+        type: "checkpoint",
+        by: owner,
+        commit_id: args.commit_id,
+        update: args.update ?? null,
+        progress_summary: args.progress_summary ?? null,
+      });
       return ok(undefined);
     });
   }
@@ -154,8 +237,30 @@ export class TicketService {
       if (!r.ok) return r;
       const sv = validateStatusForType(current.type, args.final_status);
       if (!sv.ok) return sv;
+      const owner = current.lock?.owner ?? "";
+      const wasStatus = current.status;
       await this.adapter.writeLock(ref, null);
       await this.adapter.updateTicket(ref, { status: args.final_status });
+
+      const evRel = this.mintEvent();
+      await this.record(ref, {
+        ...evRel,
+        type: "lock_change",
+        action: "release",
+        owner,
+        recovered_from: null,
+        final_status: args.final_status,
+      });
+      if (args.final_status !== wasStatus) {
+        const evSt = this.mintEvent();
+        await this.record(ref, {
+          ...evSt,
+          type: "status_change",
+          by: owner,
+          from_status: wasStatus,
+          to_status: args.final_status,
+        });
+      }
       return ok(undefined);
     });
   }
@@ -169,6 +274,8 @@ export class TicketService {
       if (!current) return err(domainErr("ENOTFOUND", `ticket ${ref.id} not found`));
       const r = reportProgressLock(current.lock, args.lock_token);
       if (!r.ok) return r;
+      const owner = current.lock?.owner ?? "";
+      const wasStatus = current.status;
       if (args.status !== undefined) {
         const sv = validateStatusForType(current.type, args.status);
         if (!sv.ok) return sv;
@@ -178,6 +285,27 @@ export class TicketService {
         await this.adapter.writeProgress(ref, {
           update: args.update ?? current.update ?? null,
           progress_summary: args.progress_summary ?? current.progress_summary ?? null,
+        });
+      }
+
+      // One progress event per call captures the visible-field deltas.
+      const ev = this.mintEvent();
+      await this.record(ref, {
+        ...ev,
+        type: "progress",
+        by: owner,
+        status: args.status ?? null,
+        update: args.update ?? null,
+        progress_summary: args.progress_summary ?? null,
+      });
+      if (args.status !== undefined && args.status !== wasStatus) {
+        const evSt = this.mintEvent();
+        await this.record(ref, {
+          ...evSt,
+          type: "status_change",
+          by: owner,
+          from_status: wasStatus,
+          to_status: args.status,
         });
       }
       return ok(undefined);
@@ -191,15 +319,23 @@ export class TicketService {
       const current = await this.adapter.getTicket(ref);
       if (!current) return err(domainErr("ENOTFOUND", `ticket ${ref.id} not found`));
       await this.adapter.appendLog(ref, line);
+      const owner = current.lock?.owner ?? null;
+      const ev = this.mintEvent();
+      await this.record(ref, {
+        ...ev,
+        type: "log",
+        by: owner,
+        line,
+      });
       return ok(undefined);
     });
   }
 
   // ── steering channel ──────────────────────────────────────────────
   // Plugin-agnostic, bidirectional async messaging on the ticket itself.
-  // Orchestrator nudges → executor reads at each checkpoint cycle → executor
-  // ACKs / replies → orchestrator reads on its next sweep. No lock required;
-  // either party may post. Per-ref mutex keeps file writes atomic.
+  // Now flows through the unified event log: each post is appended as a
+  // `message` event AND mirrored in the legacy message store via
+  // adapter.postMessage so older readers still see the steering thread.
 
   async postMessage(ref: TicketRef, dto: PostMessageDTO): Promise<Result<Message, DomainError>> {
     return this.mutex.withLock(ref, async () => {
@@ -214,6 +350,15 @@ export class TicketService {
         in_reply_to: dto.in_reply_to ?? null,
       };
       await this.adapter.postMessage(ref, message);
+      const ev = this.mintEvent();
+      await this.record(ref, {
+        ...ev,
+        type: "message",
+        from: message.from,
+        kind: message.kind,
+        body: message.body,
+        in_reply_to: message.in_reply_to,
+      });
       return ok(message);
     });
   }

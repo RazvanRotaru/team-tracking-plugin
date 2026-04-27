@@ -1,5 +1,5 @@
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
-import type { Lock, Message, Priority, TicketType } from "../../domain/types.js";
+import type { Event, Lock, Message, Priority, TicketType } from "../../domain/types.js";
 
 export type TicketFrontmatter = {
   type: TicketType;
@@ -21,12 +21,14 @@ export type ParsedTicketFile = {
   frontmatter: TicketFrontmatter;
   body: string;
   log: string[]; // raw log lines, no trailing newline
-  messages: Message[]; // steering channel
+  messages: Message[]; // steering channel (legacy projection)
+  events: Event[]; // unified append-only event log
 };
 
 const SECTION_CHILDREN = "## Children";
 const SECTION_STEERING = "## Steering";
 const SECTION_LOG = "## Log";
+const SECTION_EVENTS = "## Events";
 
 export function parseTicketFile(text: string): ParsedTicketFile {
   if (!text.startsWith("---\n")) {
