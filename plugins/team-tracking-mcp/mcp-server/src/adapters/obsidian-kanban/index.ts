@@ -20,6 +20,7 @@ import type {
 import {
   BOARD_COLUMNS,
   type CardChild,
+  deleteCard,
   formatCard,
   initialBoardText,
   listBoardCards,
@@ -314,13 +315,15 @@ export class ObsidianKanbanAdapter implements TrackerAdapter {
     await writeFileAtomic(this.ticketFile(ref), text);
 
     if (parentRef === null) {
-      // Top-level: add card to board.
+      // Top-level: always eligible for its own card.
       await this.placeBoardCard(ref, fm.status, fm.priority, draft.type, slug);
     } else {
-      // Nested: refresh parent's Children section, then refresh the
-      // top-level ancestor's board card so its child summary stays current.
+      // Nested: refresh parent's Children section, sync this ticket's own
+      // board card (eligible iff parent is past Backlog), and refresh every
+      // ancestor card so each one's sub-bullets reflect the new child.
       await this.refreshParentChildren(parentRef);
-      await this.refreshTopLevelBoardCard(parentRef);
+      await this.syncBoardCard(ref);
+      await this.refreshAncestorBoardCards(parentRef);
     }
 
     return ref;
@@ -371,33 +374,58 @@ export class ObsidianKanbanAdapter implements TrackerAdapter {
   }
 
   /**
-   * Walk up the parent chain to find the top-level ancestor (parent === null)
-   * and re-render its board card. Used after any mutation to a nested ticket
-   * so the ancestor card's child summary stays in sync.
+   * Walk up the parent chain from `start` (inclusive) and sync every
+   * ancestor's board card. Each ancestor's card may need to gain or lose
+   * sub-bullets, or move column on a status change. Stops at the top.
    */
-  private async refreshTopLevelBoardCard(start: TicketRef): Promise<void> {
+  private async refreshAncestorBoardCards(start: TicketRef): Promise<void> {
     let cur: TicketRef | null = start;
-    let topLevel: TicketRef | null = null;
-    let topParsed: ParsedTicketFile | null = null;
     while (cur) {
       const parsed = await this.loadParsed(cur);
       if (!parsed) return;
-      if (parsed.frontmatter.parent === null) {
-        topLevel = cur;
-        topParsed = parsed;
-        break;
-      }
-      cur = { project: cur.project, id: parsed.frontmatter.parent };
+      await this.syncBoardCard(cur);
+      const parentId = parsed.frontmatter.parent;
+      cur = parentId ? { project: cur.project, id: parentId } : null;
     }
-    if (!topLevel || !topParsed) return;
-    const slug = path.basename(topLevel.id);
-    await this.placeBoardCard(
-      topLevel,
-      topParsed.frontmatter.status,
-      topParsed.frontmatter.priority,
-      topParsed.frontmatter.type,
-      slug,
-    );
+  }
+
+  /**
+   * A ticket has its own kanban card iff:
+   *  - it's a non-leaf (`type !== "subtask"`), AND
+   *  - it's top-level (`parent === null`) or its parent has advanced past
+   *    `Backlog` (i.e. the parent has been "committed to plan").
+   *
+   * Brings board.md into agreement with that rule for `ref`: places or
+   * updates the card if eligible, removes it if not. Idempotent.
+   */
+  private async syncBoardCard(ref: TicketRef): Promise<void> {
+    const parsed = await this.loadParsed(ref);
+    if (!parsed) return;
+    const fm = parsed.frontmatter;
+    const eligible = await this.isEligibleForCard(ref, fm);
+    const cardLinkPrefix = this.linkPrefix(ref);
+
+    if (!eligible) {
+      const boardPath = this.boardFile(ref.project);
+      const boardText = await readFileIfExists(boardPath);
+      if (boardText === null) return;
+      const next = deleteCard(boardText, cardLinkPrefix);
+      if (next !== boardText) await writeFileAtomic(boardPath, next);
+      return;
+    }
+
+    const slug = path.basename(ref.id);
+    await this.placeBoardCard(ref, fm.status, fm.priority, fm.type, slug);
+  }
+
+  private async isEligibleForCard(ref: TicketRef, fm: TicketFrontmatter): Promise<boolean> {
+    if (fm.type === "subtask") return false;
+    if (fm.parent === null) return true;
+    const parentParsed = await this.loadParsed({
+      project: ref.project,
+      id: fm.parent,
+    });
+    return parentParsed ? parentParsed.frontmatter.status !== "Backlog" : false;
   }
 
   private async refreshParentChildren(parentRef: TicketRef): Promise<void> {
@@ -436,6 +464,7 @@ export class ObsidianKanbanAdapter implements TrackerAdapter {
       nextBody = `${heading}\n${update.body.trimEnd()}\n`;
     }
 
+    const oldStatus = parsed.frontmatter.status;
     const fm: TicketFrontmatter = {
       ...parsed.frontmatter,
       status: update.status ?? parsed.frontmatter.status,
@@ -457,20 +486,55 @@ export class ObsidianKanbanAdapter implements TrackerAdapter {
     });
     await writeFileAtomic(this.ticketFile(ref), text);
 
-    if (fm.parent === null) {
-      // Top-level: re-render its own card (status / priority / title / child
-      // summary may all have changed). When status flips to Done the upsert
-      // moves the card into the Done column atomically as part of this write.
-      const slug = path.basename(ref.id);
-      await this.placeBoardCard(ref, fm.status, fm.priority, fm.type, slug);
-    } else {
-      // Nested transition: refresh the immediate parent's ## Children
-      // checklist (so its [ ] / [x] reflects this ticket's new status), then
-      // walk up to refresh the top-level ancestor's board card sub-bullet.
+    // The status transition between Backlog and "anything past Backlog"
+    // changes the eligibility of every non-leaf child. Sync each child's
+    // own card so newly eligible children get hoisted (or removed on
+    // rollback to Backlog).
+    const crossedBacklog =
+      oldStatus !== fm.status && (oldStatus === "Backlog" || fm.status === "Backlog");
+    if (crossedBacklog) {
+      for (const child of await this.childRefs(ref)) {
+        await this.syncBoardCard(child);
+      }
+    }
+
+    // Sync this ticket's own card, then walk up the ancestor chain so each
+    // ancestor's sub-bullet for `ref` reflects the new status / title.
+    if (fm.parent !== null) {
       const parentRef: TicketRef = { project: ref.project, id: fm.parent };
       await this.refreshParentChildren(parentRef);
-      await this.refreshTopLevelBoardCard(ref);
     }
+    await this.refreshAncestorBoardCards(ref);
+
+    // Auto-flip the parent to Done if every immediate child is Done.
+    if (fm.status === "Done" && fm.parent !== null) {
+      const parentRef: TicketRef = { project: ref.project, id: fm.parent };
+      await this.autoFlipParentIfAllDone(parentRef);
+    }
+  }
+
+  /**
+   * If every immediate child of `parentRef` is Done, set the parent to
+   * Done. Recurses up the chain via `updateTicket`, so a chain of
+   * Done-everywhere flips can propagate to the top in one mutation.
+   * No-ops on a parent with zero children (so a freshly-created leaf
+   * parent doesn't trivially auto-Done itself).
+   */
+  private async autoFlipParentIfAllDone(parentRef: TicketRef): Promise<void> {
+    const parentParsed = await this.loadParsed(parentRef);
+    if (!parentParsed) return;
+    if (parentParsed.frontmatter.status === "Done") return;
+
+    const childRefs = await this.childRefs(parentRef);
+    if (childRefs.length === 0) return;
+
+    for (const child of childRefs) {
+      const childParsed = await this.loadParsed(child);
+      if (!childParsed) return;
+      if (childParsed.frontmatter.status !== "Done") return;
+    }
+
+    await this.updateTicket(parentRef, { status: "Done" });
   }
 
   // ── lock / progress / log ───────────────────────────────────────────

@@ -5,7 +5,7 @@ description: Use when you are the orchestrator turning a goal/PRD into board sta
 
 # team-tracking-orchestrate
 
-You're the planner. You read the board, decide structure, and dispatch — you don't write code or hold locks. Pairs with [`harness-orchestrate`](https://) (which says how to dispatch task teams) and the lower-level [`team-tracking-usage`](../team-tracking-usage/SKILL.md) reference.
+You're the planner. You read the board, decide structure, and dispatch — you don't write code or hold locks. Lower-level tool reference: [`team-tracking-usage`](../team-tracking-usage/SKILL.md).
 
 ## Step 0 — read the board first
 
@@ -19,6 +19,30 @@ The response is priority-ordered (`In Progress` → `Todo` → `Backlog`). Don't
 - `lock_state == "committed"` — work is in flight with a checkpoint. If `lock.acquired_at` is past TTL, it's a crash; surface to the user before stealing the lock.
 - `scope` — free-text conflict signal. If your new ticket touches the same module, sequence behind (or split that module out first).
 - `branch` — code is already moving. Coordinate, don't duplicate.
+
+## Column lifecycle
+
+The board has five columns; the meaningful state machine is:
+
+```
+Backlog ──plan──► Todo ──lock acquired──► In Progress ──PR opened──► In Review ──merged──► Done
+                                                                                              ▲
+                          ┌───── auto-flip when every child is Done ──────────────────────────┘
+```
+
+- **Backlog** — Created. Not yet committed to plan. No subtasks attached.
+- **Todo** — *Committed to plan.* The orchestrator has decomposed the ticket into pipeline subtasks and is about to dispatch. **You move it here yourself, before adding subtasks.** This is the cue the obsidian-kanban adapter uses to hoist non-leaf children onto the board as their own cards (so each child can be tracked through the columns independently).
+- **In Progress** — Auto. Set when the first specialist `acquire_ticket`s — don't write it manually.
+- **In Review** — Manual. Set when the PR is up. Specialist transitions on their own subtask via `release_ticket(..., final_status: "In Review")` once the PR is open.
+- **Done** — Manual on the leaf, auto on the parent. Specialist sets their subtask to Done at merge. The adapter flips the parent (task) when all its subtasks are Done; the epic flips when all its tasks are Done; etc.
+
+**The Backlog → Todo move is yours to make.** A common mistake (it bit a real session) is creating tickets, attaching subtasks, dispatching, and never promoting the parent — the board ends up with everything still in Backlog because you assumed something downstream would promote it. Nothing does.
+
+```
+update_ticket(epicRef,  { status: "Todo" })   // before adding child tasks
+update_ticket(taskARef, { status: "Todo" })   // before adding child subtasks
+update_ticket(taskBRef, { status: "Todo" })   // ditto
+```
 
 ## Hierarchy
 
@@ -79,10 +103,13 @@ Where to look for architectural context, in order:
 
 You don't acquire locks. The specialist does. Your handoff is:
 
-1. Pick the specialist (implementer, test-writer, adversarial-test-reviewer, adversarial-code-reviewer, …)
-2. Pass them the subtask's `TicketRef` and a short prompt describing what "done" looks like
-3. They run [`team-tracking-execute`](../team-tracking-execute/SKILL.md) — acquire → checkpoint → release
-4. When they release as `Blocked`, read the ticket's `update` + `progress_summary` and decide: split further, reassign, or escalate to user/architect
+1. Promote the parent to **Todo** (see "Column lifecycle"). Skipping this step is a common mistake.
+2. Pick the specialist role for the subtask (implementer, test-writer, adversarial-test-reviewer, adversarial-code-reviewer, …).
+3. Hand them the subtask's `TicketRef` plus a short brief: what "done" looks like, files in scope, links to spec, the parent task's body for context.
+4. They run [`team-tracking-execute`](../team-tracking-execute/SKILL.md) — acquire → checkpoint → release. Acquiring the lock auto-flips the subtask to `In Progress`.
+5. When they release as `Blocked`, read the ticket's `update` + `progress_summary` and decide: split further, reassign, or escalate to user/architect.
+
+**How** you actually summon the specialist is host-specific — Claude Code's `Agent` tool, an external worker queue, a sub-agent CLI, an issue assignee in your tracker. This skill is agnostic to that mechanism. The only contract is: the specialist receives `TicketRef`, runs `team-tracking-execute`, and reports back via the events log.
 
 ## Supervising specialists in flight
 
@@ -218,5 +245,7 @@ The push listener delivers `status_change` events for `Blocked` and `Done` trans
 - **Don't create a task without subtasks.** A bare task is half-done planning.
 - **Don't acquire locks.** That's the specialist's job.
 - **Don't promote `Todo` → `In Progress` yourself.** It happens automatically when a specialist acquires the lock.
+- **Don't forget `Backlog` → `Todo`.** That promotion *is* yours — it's the signal that you've decomposed the ticket and the children are ready to be picked up. Forgetting it leaves the whole tree marooned in Backlog.
+- **Don't manually set a parent to `Done`.** Set the leaf subtask to `Done`; the adapter rolls the parent up when every sibling is also Done. Manual sets diverge from rollup state.
 - **Don't reuse `scope` strings inconsistently.** Pick a vocabulary (typically module/package names) and stick to it.
 - **Don't dispatch a task whose subtasks contradict each other.** Re-read the spec when in doubt.
