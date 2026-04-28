@@ -190,4 +190,170 @@ describe("JiraAdapter (mock fetch)", () => {
     };
     expect(body.body.content[0]?.content[0]?.text).toBe("hello world");
   });
+
+  it("appendEvent emits a comment with [event:type] prefix and JSON payload", async () => {
+    const calls: RecordedCall[] = [];
+    const fetchImpl = makeMockFetch(
+      [
+        {
+          method: "POST",
+          pathRe: /\/comment$/,
+          handler: () => ({ status: 201, body: { id: "c1" } }),
+        },
+      ],
+      calls,
+    );
+    const a = new JiraAdapter({ ...baseConfig, fetchImpl });
+    await a.appendEvent(
+      { project: "P", id: "ACME-1" },
+      {
+        id: "evt_1",
+        at: "2026-04-25T10:00:00Z",
+        type: "message",
+        from: "orchestrator",
+        kind: "nudge",
+        body: "stay in scope",
+        in_reply_to: null,
+      },
+    );
+    expect(calls).toHaveLength(1);
+    const body = calls[0]?.body as {
+      body: { content: Array<{ content: Array<{ text: string }> }> };
+    };
+    const text = body.body.content[0]?.content[0]?.text ?? "";
+    expect(text).toMatch(/^\[event:message\] /);
+    expect(text).toContain('"id":"evt_1"');
+    expect(text).toContain('"kind":"nudge"');
+  });
+
+  it("appendEvent for checkpoint also writes update / progress_summary cache", async () => {
+    const calls: RecordedCall[] = [];
+    const fetchImpl = makeMockFetch(
+      [
+        {
+          method: "POST",
+          pathRe: /\/comment$/,
+          handler: () => ({ status: 201, body: { id: "c1" } }),
+        },
+        {
+          method: "GET",
+          pathRe: /^\/rest\/api\/3\/issue\/ACME-1/,
+          handler: () => ({
+            status: 200,
+            body: { id: "1", key: "ACME-1", fields: { description: "" } },
+          }),
+        },
+        {
+          method: "PUT",
+          pathRe: /^\/rest\/api\/3\/issue\/ACME-1/,
+          handler: () => ({ status: 204 }),
+        },
+      ],
+      calls,
+    );
+    const a = new JiraAdapter({ ...baseConfig, fetchImpl });
+    await a.appendEvent(
+      { project: "P", id: "ACME-1" },
+      {
+        id: "evt_cp",
+        at: "2026-04-25T10:00:00Z",
+        type: "checkpoint",
+        by: "alice",
+        commit_id: "abc1234",
+        update: "halfway",
+        progress_summary: "flow drafted",
+      },
+    );
+    const put = calls.find((c) => c.method === "PUT");
+    expect(put).toBeDefined();
+    const body = put?.body as { fields: { description?: unknown } };
+    const adf = body.fields.description as {
+      content?: Array<{ content?: Array<{ text?: string }> }>;
+    };
+    const text =
+      adf.content?.flatMap((p) => p.content?.map((c) => c.text ?? "") ?? [""]).join("\n") ?? "";
+    expect(text).toContain("<!-- tt:update -->");
+    expect(text).toContain("halfway");
+    expect(text).toContain("flow drafted");
+  });
+
+  it("readEvents parses [event:type] prefixed comments back into Event objects", async () => {
+    const calls: RecordedCall[] = [];
+    const ev = {
+      id: "evt_1",
+      at: "2026-04-25T10:00:00Z",
+      type: "message" as const,
+      from: "orchestrator",
+      kind: "nudge",
+      body: "stay in scope",
+      in_reply_to: null,
+    };
+    const fetchImpl = makeMockFetch(
+      [
+        {
+          method: "GET",
+          pathRe: /\/comment$/,
+          handler: () => ({
+            status: 200,
+            body: {
+              comments: [
+                { id: "c1", body: "regular log line — should be ignored" },
+                { id: "c2", body: `[event:message] ${JSON.stringify(ev)}` },
+              ],
+            },
+          }),
+        },
+      ],
+      calls,
+    );
+    const a = new JiraAdapter({ ...baseConfig, fetchImpl });
+    const events = await a.readEvents({ project: "P", id: "ACME-1" });
+    expect(events).toEqual([ev]);
+  });
+
+  it("readEvents respects since and types filters", async () => {
+    const evOld = {
+      id: "evt_old",
+      at: "2026-04-25T09:00:00Z",
+      type: "log" as const,
+      by: null,
+      line: "ancient",
+    };
+    const evNew = {
+      id: "evt_new",
+      at: "2026-04-25T11:00:00Z",
+      type: "message" as const,
+      from: "orchestrator",
+      kind: "nudge",
+      body: "fresh",
+      in_reply_to: null,
+    };
+    const calls: RecordedCall[] = [];
+    const fetchImpl = makeMockFetch(
+      [
+        {
+          method: "GET",
+          pathRe: /\/comment$/,
+          handler: () => ({
+            status: 200,
+            body: {
+              comments: [
+                { id: "c1", body: `[event:log] ${JSON.stringify(evOld)}` },
+                { id: "c2", body: `[event:message] ${JSON.stringify(evNew)}` },
+              ],
+            },
+          }),
+        },
+      ],
+      calls,
+    );
+    const a = new JiraAdapter({ ...baseConfig, fetchImpl });
+    const fresh = await a.readEvents(
+      { project: "P", id: "ACME-1" },
+      { since: "2026-04-25T10:00:00Z" },
+    );
+    expect(fresh.map((e) => e.id)).toEqual(["evt_new"]);
+    const onlyMessages = await a.readEvents({ project: "P", id: "ACME-1" }, { types: ["message"] });
+    expect(onlyMessages.map((e) => e.id)).toEqual(["evt_new"]);
+  });
 });

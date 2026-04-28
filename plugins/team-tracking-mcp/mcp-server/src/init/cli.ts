@@ -24,17 +24,26 @@ function parseArgs(argv: readonly string[]): Args {
 function usage(): string {
   return `usage: team-tracking init --adapter <obsidian-kanban|jira> [options]
 
-  --adapter            obsidian-kanban | jira
-  --vault              (obsidian) path to vault root
-  --project            project name (e.g. Acme)
-  --project-ref        adapter-side project ref (default: project name for obsidian)
-  --lock-ttl           lock TTL in seconds (default: 1800)
-  --jira-base-url      (jira) Atlassian base URL
-  --jira-email         (jira) account email
-  --jira-api-token     (jira) API token
-  --no-gitignore       skip updating .gitignore
-  --config             output path (default: ./.team-tracking/config.json)
-  --headless           non-interactive (currently the only mode)
+  --adapter              obsidian-kanban | jira
+  --vault                (obsidian) path to vault root
+  --project              project name (e.g. Acme)
+  --project-ref          adapter-side project ref (default: project name for obsidian)
+  --lock-ttl             lock TTL in seconds (default: 1800)
+  --jira-base-url        (jira) Atlassian base URL
+  --jira-email           (jira) account email
+  --jira-api-token       (jira) API token
+  --jira-webhook-port    (jira, optional) port for the webhook receiver. when set,
+                         configure Jira to POST comment_created events to
+                         http://<host>:<port>/webhook for push delivery.
+                         when unset, the adapter polls.
+  --jira-webhook-host    (jira, optional) bind interface for the webhook receiver
+                         (default: 127.0.0.1). use 0.0.0.0 if Jira reaches you
+                         from another host.
+  --jira-watch-poll-ms   (jira, optional) polling interval in ms for the
+                         poll-based fallback (default: 10000)
+  --no-gitignore         skip updating .gitignore
+  --config               output path (default: ./.team-tracking/config.json)
+  --headless             non-interactive (currently the only mode)
 
 webpage flow (no adapter args):
   --bind <host>        interface to bind on (default: 127.0.0.1).
@@ -81,22 +90,32 @@ export async function runHeadlessInit(argv: readonly string[]): Promise<{
     }
     const adapterProjectRef =
       typeof args["project-ref"] === "string" ? args["project-ref"] : projectName;
+    const adapterConfig: Record<string, unknown> = {
+      baseUrl,
+      email,
+      apiToken,
+      statusMap: {
+        Backlog: "Backlog",
+        Todo: "To Do",
+        "In Progress": "In Progress",
+        "In Review": "In Review",
+        Done: "Done",
+        Blocked: "Blocked",
+      },
+    };
+    if (typeof args["jira-webhook-port"] === "string") {
+      adapterConfig.webhookPort = Number(args["jira-webhook-port"]);
+    }
+    if (typeof args["jira-webhook-host"] === "string") {
+      adapterConfig.webhookHost = args["jira-webhook-host"];
+    }
+    if (typeof args["jira-watch-poll-ms"] === "string") {
+      adapterConfig.watchPollMs = Number(args["jira-watch-poll-ms"]);
+    }
     config = ConfigSchema.parse({
       version: 1,
       adapter: "jira",
-      adapterConfig: {
-        baseUrl,
-        email,
-        apiToken,
-        statusMap: {
-          Backlog: "Backlog",
-          Todo: "To Do",
-          "In Progress": "In Progress",
-          "In Review": "In Review",
-          Done: "Done",
-          Blocked: "Blocked",
-        },
-      },
+      adapterConfig,
       projects: [{ name: projectName, adapterProjectRef }],
       lockTtlSeconds,
     });
@@ -126,6 +145,18 @@ async function main(): Promise<void> {
     process.stdout.write(usage());
     return;
   }
+
+  if (first === "listen") {
+    const { runListen, listenUsage } = await import("./listen.js");
+    if (argv[1] === "--help" || argv[1] === "-h") {
+      process.stdout.write(listenUsage());
+      return;
+    }
+    const code = await runListen(argv.slice(1));
+    process.exitCode = code;
+    return;
+  }
+
   // Strip a leading literal "init" subcommand if present.
   const rest = first === "init" ? argv.slice(1) : argv;
 

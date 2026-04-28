@@ -21,6 +21,17 @@ export const JiraAdapterConfigSchema = z.object({
     })
     .partial()
     .optional(),
+  /**
+   * When set, the MCP server / listen CLI will start a JiraWebhookReceiver
+   * on this port and use it for push delivery. Configure Jira to POST
+   * `comment_created` events to `http://<host>:<port>/webhook`. When
+   * unset, the adapter falls back to polling.
+   */
+  webhookPort: z.number().int().positive().optional(),
+  /** Bind interface for the webhook receiver. Defaults to 127.0.0.1. */
+  webhookHost: z.string().optional(),
+  /** Polling interval (ms) when no webhookPort is configured. */
+  watchPollMs: z.number().int().positive().optional(),
 });
 
 export const ProjectEntrySchema = z.object({

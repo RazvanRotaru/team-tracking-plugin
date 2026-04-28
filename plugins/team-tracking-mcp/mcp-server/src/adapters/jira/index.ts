@@ -1,6 +1,7 @@
 import { deriveLockState } from "../../domain/lock.js";
 import type {
   CreateTicketDTO,
+  Event,
   Lock,
   Message,
   TicketDTO,
@@ -9,7 +10,12 @@ import type {
   TicketType,
   UpdateDTO,
 } from "../../domain/types.js";
-import type { AdapterConfig, TrackerAdapter } from "../types.js";
+import type {
+  AdapterConfig,
+  TrackerAdapter,
+  WatcherCallback,
+  WatcherUnsubscribe,
+} from "../types.js";
 import { readFenced, writeFenced } from "./fenced.js";
 import { type JiraAuth, type JiraIssue, JiraRest } from "./rest.js";
 import {
@@ -19,6 +25,9 @@ import {
   PRIORITY_TO_JIRA,
   StatusMapper,
 } from "./status-map.js";
+import { type JiraWebhookReceiver, subscribeReceiver } from "./webhook.js";
+
+export { JiraWebhookReceiver } from "./webhook.js";
 
 export type JiraAdapterCustomFieldIds = {
   update?: string;
@@ -33,6 +42,18 @@ export type JiraAdapterParams = JiraAuth & {
   customFieldIds?: JiraAdapterCustomFieldIds;
   projects: Array<{ name: string; adapterProjectRef: string }>;
   fetchImpl?: typeof fetch;
+  /**
+   * Polling interval for `watch()` when no webhook receiver is configured.
+   * Pure HTTP fallback; usually 5-15s is reasonable.
+   */
+  watchPollMs?: number;
+  /**
+   * Pre-started JiraWebhookReceiver. When provided, `watch()` registers
+   * with it for push delivery and skips polling entirely. The caller is
+   * responsible for the receiver's lifecycle (start/stop) — the adapter
+   * only subscribes/unsubscribes.
+   */
+  webhookReceiver?: JiraWebhookReceiver;
 };
 
 const FENCED_KEYS = {
@@ -93,6 +114,8 @@ export class JiraAdapter implements TrackerAdapter {
   private readonly statusMapper: StatusMapper;
   private readonly customFieldIds: JiraAdapterCustomFieldIds;
   private readonly projects: Map<string, string>; // canonical name → Jira project key
+  private readonly watchPollMs: number;
+  private readonly webhookReceiver: JiraWebhookReceiver | null;
 
   constructor(params: JiraAdapterParams) {
     this.rest = new JiraRest(
@@ -102,6 +125,8 @@ export class JiraAdapter implements TrackerAdapter {
     this.statusMapper = new StatusMapper(params.statusMap);
     this.customFieldIds = params.customFieldIds ?? {};
     this.projects = new Map(params.projects.map((p) => [p.name, p.adapterProjectRef]));
+    this.watchPollMs = params.watchPollMs ?? 10_000;
+    this.webhookReceiver = params.webhookReceiver ?? null;
   }
 
   async init(_config: AdapterConfig): Promise<void> {
@@ -395,17 +420,6 @@ export class JiraAdapter implements TrackerAdapter {
     });
   }
 
-  async writeProgress(
-    ref: TicketRef,
-    progress: { update: string | null; progress_summary: string | null },
-  ): Promise<void> {
-    const issue = await this.rest.getIssue(ref.id);
-    await this.writeFields(ref.id, issue, {
-      update: progress.update,
-      progress_summary: progress.progress_summary,
-    });
-  }
-
   async appendLog(ref: TicketRef, line: string): Promise<void> {
     await this.rest.addComment(ref.id, line);
   }
@@ -432,6 +446,164 @@ export class JiraAdapter implements TrackerAdapter {
     }
     out.sort((a, b) => a.at.localeCompare(b.at));
     return since ? out.filter((m) => m.at > since) : out;
+  }
+
+  /**
+   * Unified event log: each event is stored as a Jira comment with a
+   * recognizable first line:
+   *
+   *   [event:<type>] <compact-json-payload>
+   *
+   * The `[event:` prefix is unmistakable, the type is inline for cheap
+   * filtering, and the JSON payload is the full Event so a future reader
+   * doesn't need to reconstruct anything from comment metadata.
+   */
+  async appendEvent(ref: TicketRef, event: Event): Promise<void> {
+    await this.rest.addComment(ref.id, formatEventComment(event));
+    // Cache maintenance: checkpoint and progress events carry the
+    // post-state for the visible scalar fields. Update the cache (custom
+    // fields or fenced description) so getTicket doesn't have to read
+    // the full comment list to derive `update` / `progress_summary`.
+    if (event.type === "checkpoint" || event.type === "progress") {
+      const issue = await this.rest.getIssue(ref.id);
+      await this.writeFields(ref.id, issue, {
+        update: event.update,
+        progress_summary: event.progress_summary,
+      });
+    }
+  }
+
+  async readEvents(
+    ref: TicketRef,
+    opts?: { since?: string; types?: ReadonlyArray<Event["type"]> },
+  ): Promise<Event[]> {
+    const { comments } = await this.rest.listComments(ref.id);
+    const out: Event[] = [];
+    for (const c of comments) {
+      const text = typeof c.body === "string" ? c.body : fromAdf(c.body);
+      const parsed = parseEventComment(text);
+      if (!parsed) continue;
+      out.push(parsed);
+    }
+    out.sort((a, b) => a.at.localeCompare(b.at));
+    let filtered = out;
+    if (opts?.since) filtered = filtered.filter((e) => e.at > (opts.since as string));
+    if (opts?.types && opts.types.length > 0) {
+      const allow = new Set<Event["type"]>(opts.types);
+      filtered = filtered.filter((e) => allow.has(e.type));
+    }
+    return filtered;
+  }
+
+  /**
+   * Project-wide event sweep. Walks every board ticket and concatenates
+   * its event log. Filters apply post-aggregation. O(N tickets ×
+   * comments-per-ticket) — fine for small projects, expensive on large
+   * ones. The push path (`watch` with a webhook receiver) is the right
+   * answer for live use; this method is for one-shot audit dumps.
+   */
+  async readProjectEvents(
+    project: string,
+    opts?: { since?: string; types?: ReadonlyArray<Event["type"]> },
+  ): Promise<Array<{ ref: TicketRef; event: Event }>> {
+    const summaries = await this.listBoard(project);
+    const out: Array<{ ref: TicketRef; event: Event }> = [];
+    for (const s of summaries) {
+      const events = await this.readEvents(s.ref, opts);
+      for (const event of events) out.push({ ref: s.ref, event });
+    }
+    out.sort((a, b) => a.event.at.localeCompare(b.event.at));
+    return out;
+  }
+
+  /**
+   * Watch for events. Two modes:
+   *
+   * 1. **Webhook receiver** (push, low-latency): when a `webhookReceiver`
+   *    was passed in `JiraAdapterParams`, the adapter subscribes to it and
+   *    fires the callback for every `comment_created` payload whose body
+   *    parses as an event. The caller owns the receiver's HTTP lifecycle
+   *    (port binding, Jira-side webhook configuration). This is the
+   *    real-time path.
+   *
+   * 2. **Polling fallback**: when no receiver is configured, the adapter
+   *    polls each board ticket's comments at `watchPollMs` cadence and
+   *    diffs against a per-issue cursor. Higher latency floor, but works
+   *    in any deployment without a public-reachable HTTP endpoint.
+   */
+  async watch(project: string, callback: WatcherCallback): Promise<WatcherUnsubscribe> {
+    if (this.webhookReceiver) {
+      const projectKey = this.projects.get(project);
+      const isProjectIssue = (issueKey: string): boolean => {
+        if (!projectKey) return false;
+        // Jira issue keys are `<PROJECT>-<n>` (e.g. ACME-42). Match the
+        // prefix so we ignore events for issues outside this adapter's
+        // configured projects.
+        return issueKey.startsWith(`${projectKey}-`);
+      };
+      const unsubscribe = subscribeReceiver(
+        this.webhookReceiver,
+        project,
+        isProjectIssue,
+        callback,
+      );
+      return async () => {
+        unsubscribe();
+      };
+    }
+    return this.watchPolling(project, callback);
+  }
+
+  private async watchPolling(
+    project: string,
+    callback: WatcherCallback,
+  ): Promise<WatcherUnsubscribe> {
+    const cursor = new Map<string, string>(); // ticket id → last seen `at`
+    let cancelled = false;
+
+    // Seed cursors so we don't re-emit historical events.
+    const seedRefs = (await this.listBoard(project)).map((s) => s.ref);
+    for (const ref of seedRefs) {
+      try {
+        const events = await this.readEvents(ref);
+        const newest = events[events.length - 1]?.at;
+        if (newest) cursor.set(ref.id, newest);
+      } catch {
+        // Best-effort seed; failures resolve themselves on the next sweep.
+      }
+    }
+
+    const sweep = async (): Promise<void> => {
+      if (cancelled) return;
+      let refs: TicketRef[];
+      try {
+        refs = (await this.listBoard(project)).map((s) => s.ref);
+      } catch {
+        return;
+      }
+      for (const ref of refs) {
+        if (cancelled) return;
+        try {
+          const last = cursor.get(ref.id);
+          const events = await this.readEvents(ref, last ? { since: last } : undefined);
+          if (events.length === 0) continue;
+          const newest = events[events.length - 1]?.at;
+          if (newest) cursor.set(ref.id, newest);
+          callback(ref, events);
+        } catch {
+          // Skip; next sweep retries.
+        }
+      }
+    };
+
+    const interval = setInterval(() => {
+      void sweep();
+    }, this.watchPollMs);
+
+    return async () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
   }
 }
 
@@ -484,4 +656,25 @@ function unescapeMeta(value: string): string {
 const FENCED_RE_ALL = /\n*<!--\s*tt:([a-z_]+)\s*-->[\s\S]*?<!--\s*\/tt:\1\s*-->\n*/g;
 function stripFencedAll(description: string): string {
   return description.replace(FENCED_RE_ALL, "\n").replace(/^\n+|\n+$/g, "");
+}
+
+const EVENT_PREFIX_RE = /^\[event:([a-z_]+)\]\s+/;
+
+function formatEventComment(event: Event): string {
+  return `[event:${event.type}] ${JSON.stringify(event)}`;
+}
+
+function parseEventComment(text: string): Event | null {
+  const m = text.match(EVENT_PREFIX_RE);
+  if (!m) return null;
+  const json = text.slice(m[0].length).trimEnd();
+  try {
+    const parsed = JSON.parse(json) as Event;
+    if (parsed && typeof parsed === "object" && "type" in parsed && "id" in parsed) {
+      return parsed;
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }

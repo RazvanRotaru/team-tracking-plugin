@@ -81,10 +81,10 @@ export type CommitCheckpointDTO = {
 };
 
 /**
- * Per-ticket steering message. The orchestrator and the specialist executing
- * a subtask exchange these to pass nudges, questions, and ACKs without going
- * through any external channel (no shared file, no shared process). The
- * stream is append-only, ordered by `at`, and stored on the ticket itself.
+ * Per-ticket steering message. Lives inside the unified event log as a
+ * `message` event; this type is the projection used by the existing
+ * post_message / read_messages tools and by external readers that want
+ * just the human-readable conversation.
  *
  * `kind` is free-text; common values are `nudge`, `question`, `response`,
  * `ack`, `info`. Skills define the conventions; the server does not enforce.
@@ -104,6 +104,120 @@ export type PostMessageDTO = {
   body: string;
   in_reply_to?: string;
 };
+
+/**
+ * Unified, append-only event log per ticket. Every state change — messages,
+ * checkpoints, progress reports, status flips, lock acquire/release, log
+ * lines — flows through this log. It is the single source of truth for the
+ * ticket's audit trail; the canonical scalar fields on the ticket
+ * (`update`, `progress_summary`, `lock`) are derived projections of the
+ * latest relevant event and are kept on the ticket as a read cache.
+ *
+ * The broker (in-process pub/sub inside the MCP server) fans out new events
+ * to subscribed listeners. Both the orchestrator and the specialist read
+ * from the same log via the same `since` cursor.
+ */
+export type EventType =
+  | "message"
+  | "checkpoint"
+  | "progress"
+  | "log"
+  | "status_change"
+  | "lock_change"
+  | "created"
+  | "fields_change";
+
+type EventBase = {
+  id: string; // server-minted, e.g. "evt_<uuid>"
+  at: string; // ISO-8601, monotone within a ticket (server enforces)
+  type: EventType;
+};
+
+export type MessageEvent = EventBase & {
+  type: "message";
+  from: string;
+  kind: string; // free-text: nudge|question|response|ack|info
+  body: string;
+  in_reply_to: string | null;
+};
+
+export type CheckpointEvent = EventBase & {
+  type: "checkpoint";
+  by: string; // lock owner who recorded the checkpoint
+  commit_id: string;
+  update: string | null;
+  progress_summary: string | null;
+};
+
+export type ProgressEvent = EventBase & {
+  type: "progress";
+  by: string;
+  status: string | null;
+  update: string | null;
+  progress_summary: string | null;
+};
+
+export type LogEvent = EventBase & {
+  type: "log";
+  by: string | null; // null when posted by an orchestrator / unauthenticated caller
+  line: string;
+};
+
+export type StatusChangeEvent = EventBase & {
+  type: "status_change";
+  by: string | null;
+  from_status: string | null;
+  to_status: string;
+};
+
+export type LockChangeEvent = EventBase & {
+  type: "lock_change";
+  action: "acquire" | "release" | "recover";
+  owner: string;
+  // For "recover": the prior owner whose stale lock was reclaimed.
+  recovered_from: string | null;
+  final_status: string | null; // for "release", the status set on release
+};
+
+/**
+ * Bookkeeping event recorded the moment a ticket is created. Captures the
+ * shape callers care about for audit replay (type, parent, title, initial
+ * priority and status). Always the first event in a ticket's log.
+ */
+export type CreatedEvent = EventBase & {
+  type: "created";
+  ticket_type: TicketType;
+  parent: TicketRef | null;
+  title: string;
+  status: string;
+  priority: Priority;
+  labels: string[];
+  scope: string | null;
+};
+
+/**
+ * Non-status field updates from `update_ticket`. Status flips have a
+ * dedicated `status_change` event because they're tied to the lock state
+ * machine; everything else (title, body, priority, labels, scope, branch,
+ * pr_url) lands here as a generic from/to diff per changed field. `body`
+ * is summarized as a length delta to keep the event log compact — the
+ * full body is recoverable via the ticket itself.
+ */
+export type FieldsChangeEvent = EventBase & {
+  type: "fields_change";
+  by: string | null;
+  changes: Record<string, { from: unknown; to: unknown }>;
+};
+
+export type Event =
+  | MessageEvent
+  | CheckpointEvent
+  | ProgressEvent
+  | LogEvent
+  | StatusChangeEvent
+  | LockChangeEvent
+  | CreatedEvent
+  | FieldsChangeEvent;
 
 export type AllowedStatuses = Record<TicketType, readonly string[]>;
 

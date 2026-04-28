@@ -63,6 +63,67 @@ describe("MCP stdio e2e: full retry-from-checkpoint story", () => {
     await fs.rm(cwd, { recursive: true, force: true });
   });
 
+  it("read_events / read_project_events surface every recorded mutation", async () => {
+    // Fresh ticket — exercise create, status change, message, log, progress.
+    const epicCall = await callTool("create_ticket", {
+      project: "P",
+      draft: { type: "epic", title: "Audit me" },
+    });
+    expect(epicCall.isError).toBe(false);
+    const epic = JSON.parse(epicCall.text) as { project: string; id: string };
+
+    await callTool("update_ticket", { ref: epic, update: { status: "Todo" } });
+    await callTool("post_message", {
+      ref: epic,
+      from: "orchestrator",
+      kind: "info",
+      body: "kicking off",
+    });
+    await callTool("append_log", { ref: epic, line: "branch cut" });
+
+    const eventsCall = await callTool("read_events", { ref: epic });
+    expect(eventsCall.isError).toBe(false);
+    const events = JSON.parse(eventsCall.text) as Array<{ type: string; at: string }>;
+    const types = events.map((e) => e.type);
+    expect(types).toContain("created");
+    expect(types).toContain("status_change");
+    expect(types).toContain("message");
+    expect(types).toContain("log");
+
+    // since-cursor filter — only most recent should come back.
+    const lastAt = events[events.length - 1]?.at;
+    expect(lastAt).toBeDefined();
+    const filteredCall = await callTool("read_events", {
+      ref: epic,
+      since: lastAt,
+    });
+    expect(filteredCall.isError).toBe(false);
+    expect(JSON.parse(filteredCall.text)).toEqual([]);
+
+    // types filter narrows.
+    const messagesOnlyCall = await callTool("read_events", {
+      ref: epic,
+      types: ["message"],
+    });
+    expect(messagesOnlyCall.isError).toBe(false);
+    const messagesOnly = JSON.parse(messagesOnlyCall.text) as Array<{ type: string }>;
+    expect(messagesOnly.every((e) => e.type === "message")).toBe(true);
+    expect(messagesOnly).toHaveLength(1);
+
+    // Project-wide read returns ref+event pairs.
+    const projectCall = await callTool("read_project_events", { project: "P" });
+    expect(projectCall.isError).toBe(false);
+    const projectPairs = JSON.parse(projectCall.text) as Array<{
+      ref: { id: string };
+      event: { type: string };
+    }>;
+    expect(projectPairs.length).toBeGreaterThan(0);
+    expect(projectPairs.every((p) => p.ref.id === epic.id || typeof p.ref.id === "string")).toBe(
+      true,
+    );
+    expect(projectPairs.some((p) => p.event.type === "message")).toBe(true);
+  }, 30_000);
+
   it("create → acquire → checkpoint → stale → recovered_checkpoint → release", async () => {
     // Create epic → story (story can host a subtask)
     const epicCall = await callTool("create_ticket", {
