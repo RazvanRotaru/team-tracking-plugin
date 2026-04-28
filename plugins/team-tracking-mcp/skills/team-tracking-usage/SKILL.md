@@ -1,6 +1,6 @@
 ---
 name: team-tracking-usage
-description: Reference for the team-tracking MCP server — the eleven tools, the four ticket types, the unified event log, the lock state machine, and the typed errors. Load this when you need to know what a tool does or how `lock_state` is derived. For role-specific protocols, use `team-tracking-orchestrate` (planner) or `team-tracking-execute` (specialist).
+description: Reference for the team-tracking MCP server — the eleven tools, the four ticket types, the unified event log, the lock state machine, and the typed errors. Load this when you need to know what a tool does or how `lock_state` is derived. For role-specific protocols, use `team-tracking-plan` (planner, before dispatch), `team-tracking-supervise` (planner, after dispatch), or `team-tracking-execute` (specialist).
 ---
 
 # team-tracking-usage
@@ -8,8 +8,10 @@ description: Reference for the team-tracking MCP server — the eleven tools, th
 Tool reference for the team-tracking MCP server (server name: `team-tracking`). The tracker (Jira or Obsidian Kanban) is the only source of truth — there's no side-store, and no caller should parse markdown or JSON to reason about state. Use the tools below.
 
 For *what to do with these tools by role*, see:
-- [`team-tracking-orchestrate`](../team-tracking-orchestrate/SKILL.md) — planning, decomposition, dispatch
+- [`team-tracking-plan`](../team-tracking-plan/SKILL.md) — planning, decomposition, dispatch
+- [`team-tracking-supervise`](../team-tracking-supervise/SKILL.md) — keeping in-flight specialists on track
 - [`team-tracking-execute`](../team-tracking-execute/SKILL.md) — running a single subtask, escalation
+- [`team-tracking-obsidian-kanban`](../team-tracking-obsidian-kanban/SKILL.md) — adapter-specific quirks (skip if using Jira)
 
 ## Ticket model
 
@@ -28,7 +30,7 @@ Server-enforced parent rules:
 | `task` | `story`, `epic`, or `null` |
 | `subtask` | `task` or `story` |
 
-Subtasks are the atomic unit a specialist owns. A task without subtasks is incomplete planning (see `team-tracking-orchestrate`).
+Subtasks are the atomic unit a specialist owns. A task without subtasks is incomplete planning (see `team-tracking-plan`).
 
 ## The unified event log
 
@@ -78,7 +80,7 @@ Audit trail (no lock required):
 
 ### Steering channel (no lock required)
 
-Bidirectional, async, plugin-agnostic messaging on the ticket itself. Used by `team-tracking-orchestrate` to nudge specialists in flight, and by `team-tracking-execute` to ACK / answer / push back.
+Bidirectional, async, plugin-agnostic messaging on the ticket itself. Used by `team-tracking-supervise` to nudge specialists in flight, and by `team-tracking-execute` to ACK / answer / push back.
 
 - `post_message(ref, { from, kind?, body, in_reply_to? })` → `Message` (server mints `id` and `at`). Emits a `message` event.
 

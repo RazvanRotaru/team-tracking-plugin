@@ -9,7 +9,7 @@
     {
       "name": "team-tracking-mcp",
       "source": "./plugins/team-tracking-mcp",
-      "description": "MCP server + adapters (Obsidian Kanban, Jira), three skills (orchestrate, execute, usage), and three slash commands."
+      "description": "MCP server + adapters (Obsidian Kanban, Jira), six skills (plan, supervise, execute, usage, obsidian-kanban, plus the orchestrate router), and three slash commands."
     }
   ]
 }
