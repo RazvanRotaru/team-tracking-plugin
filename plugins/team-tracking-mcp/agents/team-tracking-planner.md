@@ -39,22 +39,32 @@ Your final message **must end** with a fenced JSON block, exactly this shape:
     {
       "ref": { "project": "Acme", "id": "tickets/wire-retry/children/write-tests" },
       "role": "test-writer",
-      "brief": "Author the failing test suite for the retry policy. Files in scope: src/queue/retry.ts, src/queue/retry.test.ts. Acceptance: tests run red against current main; cover happy path + the three failure modes called out in the parent task body."
-    },
-    {
-      "ref": { "project": "Acme", "id": "tickets/wire-retry/children/implement" },
-      "role": "implementer",
-      "brief": "Make the test suite from the previous subtask pass. ..."
+      "brief": "Use skill team-tracking-execute. Before any other work, run via bash: team-tracking acquire --project=Acme --id=tickets/wire-retry/children/write-tests --owner=test-writer@dispatch-N. The output's system_addendum carries the protocol you must follow. Mandatory.\n\nAuthor the failing test suite for the retry policy. Files in scope: src/queue/retry.ts, src/queue/retry.test.ts. Acceptance: tests run red against current main; cover happy path + the three failure modes called out in the parent task body."
     }
   ],
   "notes": "Implement depends on Write-tests landing. Open question: provider config — flagged in the parent body for architect review before dispatching."
 }
 ```
 
-Field rules:
+### Mandatory brief prefix
+
+Every `brief` **must** begin with this literal sentence (project / id / role substituted in):
+
+```
+Use skill team-tracking-execute. Before any other work, run via bash: team-tracking acquire --project=<P> --id=<ID> --owner=<role>@<dispatch-N>. The output's system_addendum carries the protocol you must follow. Mandatory.
+```
+
+This is the hand-off contract between you and the executor. It works regardless of which MCP tools the host granted the dispatched specialist — the `team-tracking` CLI is bash-callable and self-contained, and the `system_addendum` it returns includes the inlined `team-tracking-execute` skill body. Skipping this prefix breaks the executor's bootstrap. Do not skip it. Do not abbreviate it.
+
+`<dispatch-N>` should be a fresh sequence number you mint per dispatch (so the lock owner string is unique per spawn — useful for audit when multiple specialists rotate through the same ticket).
+
+After the prefix, leave one blank line, then write the actual brief: definition of done, files in scope, links to spec, the parent task body for context. Write as you'd want to receive it.
+
+### Field rules
+
 - `ref` — the `TicketRef` you got back from `create_ticket` (or an existing one for re-plans).
 - `role` — one of `architect`, `test-writer`, `test-reviewer`, `implementer`, `code-reviewer`, `ci-triage`. Pick by the subtask type.
-- `brief` — the prompt the supervisor will pass verbatim to that specialist along with the `ref`. Write it as you'd want to receive it: definition of done, files in scope, links to spec, parent task body for context. The specialist's `acquire_ticket` call will inject the protocol skill automatically; you don't need to repeat that.
+- `brief` — the prompt the supervisor will pass verbatim to that specialist. Must start with the mandatory prefix above.
 - `dispatch_list` order matters — the supervisor dispatches in order and waits between dependent stages. List parallel work back-to-back.
 - `notes` — anything the supervisor should know: blockers, dependencies, open questions, architectural risks.
 

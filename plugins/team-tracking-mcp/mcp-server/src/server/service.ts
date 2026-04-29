@@ -33,11 +33,16 @@ export type ServiceOptions = {
    * Skills the executor must load in their working session. The server
    * surfaces this list as a `system_addendum` string on every
    * `acquire_ticket` response so dispatched specialists are guaranteed to
-   * receive the instruction even if the orchestrator's brief omits it.
+   * receive the instruction (and the inlined skill body) even when the
+   * dispatching session can't grant them the matching MCP tools or
+   * arrange a `skills:` frontmatter. Each entry carries the skill name
+   * and, optionally, the skill body — when `body` is present the addendum
+   * inlines it under a `--- <name> ---` divider so the executor receives
+   * the protocol regardless of whether they can dynamically load skills.
    * Defaults to the protocol skill alone — kept narrow on purpose so
    * executors don't see orchestrator-only tooling.
    */
-  executorSkills?: ReadonlyArray<string>;
+  executorSkills?: ReadonlyArray<{ name: string; body?: string }>;
 };
 
 export type AcquireResultDTO = {
@@ -52,15 +57,29 @@ export type AcquireResultDTO = {
   system_addendum: string;
 };
 
-const DEFAULT_EXECUTOR_SKILLS: ReadonlyArray<string> = ["team-tracking-execute"];
+const DEFAULT_EXECUTOR_SKILLS: ReadonlyArray<{ name: string; body?: string }> = [
+  { name: "team-tracking-execute" },
+];
 
-function formatExecutorAddendum(skills: ReadonlyArray<string>): string {
-  if (skills.length === 0) return "";
-  if (skills.length === 1) return `Use skill ${skills[0]} in your work.`;
-  if (skills.length === 2) return `Use skill ${skills[0]} and ${skills[1]} in your work.`;
-  const init = skills.slice(0, -1).join(", ");
-  const last = skills[skills.length - 1];
+function formatSkillNameList(names: ReadonlyArray<string>): string {
+  if (names.length === 0) return "";
+  if (names.length === 1) return `Use skill ${names[0]} in your work.`;
+  if (names.length === 2) return `Use skill ${names[0]} and ${names[1]} in your work.`;
+  const init = names.slice(0, -1).join(", ");
+  const last = names[names.length - 1];
   return `Use skill ${init}, and ${last} in your work.`;
+}
+
+function formatExecutorAddendum(skills: ReadonlyArray<{ name: string; body?: string }>): string {
+  if (skills.length === 0) return "";
+  const intro = formatSkillNameList(skills.map((s) => s.name));
+  // If no bodies are provided, the addendum is the bare instruction —
+  // back-compat with the original name-only contract.
+  const sections = skills
+    .filter((s) => s.body && s.body.trim().length > 0)
+    .map((s) => `--- ${s.name} ---\n${(s.body ?? "").trim()}`);
+  if (sections.length === 0) return intro;
+  return `${intro}\n\n${sections.join("\n\n")}`;
 }
 
 /** Hook for the broker to receive every event the service emits. */

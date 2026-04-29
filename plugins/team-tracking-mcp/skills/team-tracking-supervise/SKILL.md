@@ -37,7 +37,7 @@ The planner's final message ends with a fenced JSON block:
 }
 ```
 
-Parse that block and dispatch the entries in order. Each `brief` is the prompt to pass verbatim to the specialist (alongside the `ref`). The specialist's `acquire_ticket` injects the executor protocol skill — you don't need to add it to the brief.
+Parse that block and dispatch the entries **in order**. Each `brief` is the prompt to pass to the specialist **verbatim** — never modify, abbreviate, or strip its leading lines. The brief's mandatory prefix (`Use skill team-tracking-execute. Before any other work, run via bash: team-tracking acquire …`) is the executor's bootstrap; without it the specialist may bypass the protocol entirely. If a brief looks malformed or missing the prefix, that's a planner bug — re-spawn the planner rather than ad-libbing a fix.
 
 If a stage's specialists depend on a prior stage finishing (e.g., `code-reviewer` after `implementer`), wait for the prior `Done` event before dispatching the next entry. The planner's `notes` field flags those dependencies.
 

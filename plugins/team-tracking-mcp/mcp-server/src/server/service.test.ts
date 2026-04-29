@@ -204,7 +204,7 @@ describe("TicketService (Obsidian-backed)", () => {
     expect(a.value.system_addendum).toBe("Use skill team-tracking-execute in your work.");
   });
 
-  it("system_addendum is configurable via ServiceOptions.executorSkills", async () => {
+  it("system_addendum is configurable via ServiceOptions.executorSkills (multi-skill, names only)", async () => {
     const adapter = new ObsidianKanbanAdapter(dir);
     await adapter.init({ vaultPath: dir });
     const custom = new TicketService(adapter, new RefMutex(), {
@@ -213,7 +213,7 @@ describe("TicketService (Obsidian-backed)", () => {
       mintToken: () => `tok_${++tokenN}`,
       mintMessageId: () => `msg_${++tokenN}`,
       mintEventId: () => `evt_${++tokenN}`,
-      executorSkills: ["team-tracking-execute", "clean-code"],
+      executorSkills: [{ name: "team-tracking-execute" }, { name: "clean-code" }],
     });
     const t = await custom.createTicket("P2", { type: "task", title: "T" });
     if (!t.ok) throw new Error("setup");
@@ -222,6 +222,32 @@ describe("TicketService (Obsidian-backed)", () => {
     if (!a.ok) return;
     expect(a.value.system_addendum).toBe(
       "Use skill team-tracking-execute and clean-code in your work.",
+    );
+  });
+
+  it("system_addendum inlines skill body under a `--- name ---` divider", async () => {
+    const adapter = new ObsidianKanbanAdapter(dir);
+    await adapter.init({ vaultPath: dir });
+    const inlined = new TicketService(adapter, new RefMutex(), {
+      ttlSeconds: 1800,
+      now: () => new Date(nowMs).toISOString(),
+      mintToken: () => `tok_${++tokenN}`,
+      mintMessageId: () => `msg_${++tokenN}`,
+      mintEventId: () => `evt_${++tokenN}`,
+      executorSkills: [
+        {
+          name: "team-tracking-execute",
+          body: "## Acquire\n\nacquire_ticket(ref, owner) → ...\n",
+        },
+      ],
+    });
+    const t = await inlined.createTicket("P4", { type: "task", title: "T" });
+    if (!t.ok) throw new Error("setup");
+    const a = await inlined.acquireTicket(t.value, "alice");
+    expect(a.ok).toBe(true);
+    if (!a.ok) return;
+    expect(a.value.system_addendum).toBe(
+      "Use skill team-tracking-execute in your work.\n\n--- team-tracking-execute ---\n## Acquire\n\nacquire_ticket(ref, owner) → ...",
     );
   });
 
