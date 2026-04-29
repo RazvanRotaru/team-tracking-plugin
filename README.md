@@ -64,7 +64,7 @@ sequenceDiagram
       T-->>O: status_change event (via background `listen`)
     end
 
-    Note over O,T: On Blocked: O re-spawns P with the blocker context;<br/>P returns a fresh dispatch_list and the loop continues.
+    Note over O,T: On Blocked, the main session re-spawns the planner with blocker context; planner returns a fresh dispatch_list and the loop continues.
 ```
 
 Two design decisions that fall out of this shape:
