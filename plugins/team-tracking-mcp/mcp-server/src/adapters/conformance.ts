@@ -253,22 +253,27 @@ export function runConformance(name: string, makeFixture: () => Promise<Conforma
 
     // ── listBoard ───────────────────────────────────────────────────────
 
-    it("listBoard returns top-level tickets only", async () => {
-      const epic = await fx.adapter.createTicket(fx.project, {
-        type: "epic",
-        title: "E",
+    it("listBoard never includes leaf (subtask) tickets", async () => {
+      // Cross-adapter contract: leaves (subtasks) are decomposition artifacts,
+      // not first-class board cards. Adapters MAY surface non-leaf nested
+      // tickets (epics/stories/tasks) once their parent has been planned —
+      // that's adapter-specific behavior tested per adapter. Leaves never
+      // appear on the board regardless.
+      const task = await fx.adapter.createTicket(fx.project, {
+        type: "task",
+        title: "T",
       });
-      await fx.adapter.updateTicket(epic, { status: "In Progress" });
-      const story = await fx.adapter.createTicket(fx.project, {
-        type: "story",
-        parent: epic,
-        title: "S",
+      await fx.adapter.updateTicket(task, { status: "In Progress" });
+      const subtask = await fx.adapter.createTicket(fx.project, {
+        type: "subtask",
+        parent: task,
+        title: "Sub",
       });
-      await fx.adapter.updateTicket(story, { status: "In Progress" });
+      await fx.adapter.updateTicket(subtask, { status: "In Progress" });
       const board = await fx.adapter.listBoard(fx.project);
       const ids = board.map((s) => s.ref.id);
-      expect(ids).toContain(epic.id);
-      expect(ids).not.toContain(story.id);
+      expect(ids).toContain(task.id);
+      expect(ids).not.toContain(subtask.id);
     });
 
     it("listBoard orders by status: In Progress > Todo > Backlog", async () => {
