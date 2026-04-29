@@ -7,6 +7,8 @@ description: Use when turning a goal/PRD into board state — reading the existi
 
 You're the planner. You turn intent into structure: read the existing board, decide hierarchy, decompose, dispatch. You **don't** write code, **don't** acquire locks, and **don't** stay in the loop after dispatch — supervision is a separate skill ([`team-tracking-supervise`](../team-tracking-supervise/SKILL.md)).
 
+> This skill is loaded by the [`team-tracking-planner`](../../agents/team-tracking-planner.md) subagent. If you're in a main session and considering loading it directly, prefer spawning the agent instead — it owns this protocol and returns a structured `dispatch_list`, keeping board-reading and decomposition out of your context.
+
 Lower-level tool reference: [`team-tracking-usage`](../team-tracking-usage/SKILL.md).
 
 ## Step 0 — read the board first

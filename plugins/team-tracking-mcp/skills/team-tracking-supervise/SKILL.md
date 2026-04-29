@@ -5,9 +5,43 @@ description: Use when you have at least one specialist in flight on a ticket and
 
 # team-tracking-supervise
 
-You're the supervisor. Specialists are running; your job is to catch drift early, answer their questions, and recover stalled work. You **don't** plan new work in this skill ([`team-tracking-plan`](../team-tracking-plan/SKILL.md) is for that), and you **don't** acquire locks ([`team-tracking-execute`](../team-tracking-execute/SKILL.md) is for that).
+You're the supervisor. Specialists are running; your job is to catch drift early, answer their questions, and recover stalled work. You **don't** plan inline — that's offloaded to the [`team-tracking-planner`](../../agents/team-tracking-planner.md) subagent so board reading and decomposition stay out of your context. You **don't** acquire locks ([`team-tracking-execute`](../team-tracking-execute/SKILL.md) is the specialist's protocol).
 
 Lower-level tool reference: [`team-tracking-usage`](../team-tracking-usage/SKILL.md).
+
+## Spawning the planner
+
+For every plan and re-plan, dispatch the planner subagent. It returns a `dispatch_list` you act on.
+
+```
+Agent(
+  subagent_type: "team-tracking-planner",
+  description: "Plan <intent> for <project>",
+  prompt: "<PRD or blocker context>\n\nproject: <name>",
+)
+```
+
+Two flows:
+
+- **Fresh plan** — at the start of work, or whenever a pipeline stage finishes and the next stage isn't already on the dispatch_list. Pass the PRD / intent + project name.
+- **Re-plan** — when a specialist releases as `Blocked`. Pass the blocked `TicketRef` + the blocker's `progress_summary` + project name. The planner adjusts the board (split, reassign, edit briefs) and returns a new `dispatch_list`.
+
+The planner's final message ends with a fenced JSON block:
+
+```json
+{
+  "dispatch_list": [
+    { "ref": { "project": "...", "id": "..." }, "role": "implementer", "brief": "..." }
+  ],
+  "notes": "..."
+}
+```
+
+Parse that block and dispatch the entries in order. Each `brief` is the prompt to pass verbatim to the specialist (alongside the `ref`). The specialist's `acquire_ticket` injects the executor protocol skill — you don't need to add it to the brief.
+
+If a stage's specialists depend on a prior stage finishing (e.g., `code-reviewer` after `implementer`), wait for the prior `Done` event before dispatching the next entry. The planner's `notes` field flags those dependencies.
+
+**Don't load `team-tracking-plan` yourself.** That skill belongs to the planner agent. Loading it inline pulls board-reading and decomposition reasoning into your context — which is exactly what spawning the agent avoids.
 
 ## Two parallel signals
 
@@ -129,7 +163,7 @@ If a question goes 10+ min without a reply: the executor is either deep in a lon
 The push listener delivers `status_change` events for `Blocked` and `Done` transitions automatically. Periodic `list_board` sweeps still serve as a safety net:
 - `Blocked` tickets — read `progress_summary` (the executor wrote you a briefing) and act: split, reassign, or surface to the user.
 - Stale `committed` locks past TTL with the same checkpoint for too long — likely crashed; recover via re-acquire.
-- Newly `Done` subtasks — return to [`team-tracking-plan`](../team-tracking-plan/SKILL.md) to dispatch the next pipeline stage if there is one.
+- Newly `Done` subtasks — dispatch the next entry in the planner's `dispatch_list` if there is one. If the list is exhausted but more work remains (e.g., the parent task isn't auto-`Done` yet), spawn the planner again for the next pipeline stage.
 
 ## Red flags
 
