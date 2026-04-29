@@ -12,28 +12,28 @@ The plugin splits an end-to-end orchestration cycle across three Claude contexts
 
 ```mermaid
 flowchart LR
-    subgraph CC["Claude Code session"]
-      O["Main session<br/><i>team-tracking-supervise</i>"]
-      P["Planner subagent<br/><i>team-tracking-plan</i>"]
-      S["Specialist subagent<br/><i>team-tracking-execute</i>"]
+    subgraph CC[Claude Code session]
+      O[Main session - team-tracking-supervise]
+      P[Planner subagent - team-tracking-plan]
+      S[Specialist subagent - team-tracking-execute]
     end
 
-    subgraph SRV["team-tracking MCP server (in-process)"]
-      Service["TicketService<br/>· lock state machine<br/>· per-ref mutex<br/>· event log + broker"]
+    subgraph SRV[team-tracking MCP server]
+      Service[TicketService - lock state machine and event log]
     end
 
-    subgraph T["Tracker (source of truth)"]
-      Vault[("Obsidian Vault")]
-      Jira[("Jira")]
+    subgraph TR[Tracker]
+      Vault[(Obsidian Vault)]
+      Jira[(Jira)]
     end
 
-    O -- "spawns" --> P
-    O -- "spawns" --> S
-    P -- "MCP tools" --> Service
-    O -- "MCP tools<br/>+ listen CLI" --> Service
-    S -- "team-tracking CLI<br/>(bash) or MCP" --> Service
-    Service -- "adapter" --> Vault
-    Service -- "adapter" --> Jira
+    O -- spawns --> P
+    O -- spawns --> S
+    P -- MCP --> Service
+    O -- MCP plus listen CLI --> Service
+    S -- CLI or MCP --> Service
+    Service -- adapter --> Vault
+    Service -- adapter --> Jira
 ```
 
 A typical cycle, end to end:
@@ -44,27 +44,26 @@ sequenceDiagram
     participant U as User
     participant O as Main session
     participant P as Planner subagent
-    participant T as MCP server / Tracker
+    participant T as Server
     participant S as Specialist subagent
 
-    U->>O: "Plan and execute X"
-    O->>P: spawn (PRD + project)
+    U->>O: plan and execute
+    O->>P: spawn with PRD and project
     P->>T: list_board
-    P->>T: create_ticket(s) + update_ticket(parent → Todo)
-    P-->>O: dispatch_list JSON ({ ref, role, brief }[])
-    Note over O: brief.startsWith("Use skill team-tracking-execute. Run via bash: team-tracking acquire …")
+    P->>T: create_ticket and promote parent to Todo
+    P-->>O: dispatch_list JSON
 
     loop each entry in order
-      O->>S: spawn (verbatim brief)
-      S->>T: bash: team-tracking acquire
-      T-->>S: lock_token + system_addendum (inlined skill body)
+      O->>S: spawn with verbatim brief
+      S->>T: bash team-tracking acquire
+      T-->>S: lock_token plus inlined system_addendum
       S->>S: do the work
-      S->>T: bash: team-tracking checkpoint (per commit)
-      S->>T: bash: team-tracking release Done
-      T-->>O: status_change event (via background `listen`)
+      S->>T: bash team-tracking checkpoint per commit
+      S->>T: bash team-tracking release Done
+      T-->>O: status_change event via background listen
     end
 
-    Note over O,T: On Blocked, the main session re-spawns the planner with blocker context; planner returns a fresh dispatch_list and the loop continues.
+    Note over O,T: On Blocked the main session re-spawns the planner with blocker context
 ```
 
 Two design decisions that fall out of this shape:
