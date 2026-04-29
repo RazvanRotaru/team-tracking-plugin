@@ -194,6 +194,56 @@ describe("TicketService (Obsidian-backed)", () => {
     expect(types).not.toContain("fields_change");
   });
 
+  it("acquire_ticket includes system_addendum naming the executor skills", async () => {
+    const t = await service.createTicket("P", { type: "task", title: "T" });
+    if (!t.ok) throw new Error("setup");
+    const a = await service.acquireTicket(t.value, "alice");
+    expect(a.ok).toBe(true);
+    if (!a.ok) return;
+    // Default skill set is intentionally narrow — protocol skill only.
+    expect(a.value.system_addendum).toBe("Use skill team-tracking-execute in your work.");
+  });
+
+  it("system_addendum is configurable via ServiceOptions.executorSkills", async () => {
+    const adapter = new ObsidianKanbanAdapter(dir);
+    await adapter.init({ vaultPath: dir });
+    const custom = new TicketService(adapter, new RefMutex(), {
+      ttlSeconds: 1800,
+      now: () => new Date(nowMs).toISOString(),
+      mintToken: () => `tok_${++tokenN}`,
+      mintMessageId: () => `msg_${++tokenN}`,
+      mintEventId: () => `evt_${++tokenN}`,
+      executorSkills: ["team-tracking-execute", "clean-code"],
+    });
+    const t = await custom.createTicket("P2", { type: "task", title: "T" });
+    if (!t.ok) throw new Error("setup");
+    const a = await custom.acquireTicket(t.value, "alice");
+    expect(a.ok).toBe(true);
+    if (!a.ok) return;
+    expect(a.value.system_addendum).toBe(
+      "Use skill team-tracking-execute and clean-code in your work.",
+    );
+  });
+
+  it("system_addendum is empty when executorSkills is configured to []", async () => {
+    const adapter = new ObsidianKanbanAdapter(dir);
+    await adapter.init({ vaultPath: dir });
+    const bare = new TicketService(adapter, new RefMutex(), {
+      ttlSeconds: 1800,
+      now: () => new Date(nowMs).toISOString(),
+      mintToken: () => `tok_${++tokenN}`,
+      mintMessageId: () => `msg_${++tokenN}`,
+      mintEventId: () => `evt_${++tokenN}`,
+      executorSkills: [],
+    });
+    const t = await bare.createTicket("P3", { type: "task", title: "T" });
+    if (!t.ok) throw new Error("setup");
+    const a = await bare.acquireTicket(t.value, "alice");
+    expect(a.ok).toBe(true);
+    if (!a.ok) return;
+    expect(a.value.system_addendum).toBe("");
+  });
+
   it("stale lock TTL → second acquire succeeds with recovered_checkpoint", async () => {
     const t = await service.createTicket("P", { type: "task", title: "T" });
     if (!t.ok) throw new Error("setup");

@@ -29,12 +29,39 @@ export type ServiceOptions = {
   mintToken: () => string;
   mintMessageId: () => string;
   mintEventId: () => string;
+  /**
+   * Skills the executor must load in their working session. The server
+   * surfaces this list as a `system_addendum` string on every
+   * `acquire_ticket` response so dispatched specialists are guaranteed to
+   * receive the instruction even if the orchestrator's brief omits it.
+   * Defaults to the protocol skill alone — kept narrow on purpose so
+   * executors don't see orchestrator-only tooling.
+   */
+  executorSkills?: ReadonlyArray<string>;
 };
 
 export type AcquireResultDTO = {
   lock_token: string;
   recovered_checkpoint: Checkpoint | null;
+  /**
+   * Server-injected instruction the executor must obey. Carries the skill
+   * list they need to load to follow the protocol; deterministic so the
+   * orchestrator can't forget to include it. Empty string when no skills
+   * are configured.
+   */
+  system_addendum: string;
 };
+
+const DEFAULT_EXECUTOR_SKILLS: ReadonlyArray<string> = ["team-tracking-execute"];
+
+function formatExecutorAddendum(skills: ReadonlyArray<string>): string {
+  if (skills.length === 0) return "";
+  if (skills.length === 1) return `Use skill ${skills[0]} in your work.`;
+  if (skills.length === 2) return `Use skill ${skills[0]} and ${skills[1]} in your work.`;
+  const init = skills.slice(0, -1).join(", ");
+  const last = skills[skills.length - 1];
+  return `Use skill ${init}, and ${last} in your work.`;
+}
 
 /** Hook for the broker to receive every event the service emits. */
 export type EventEmitter = (ref: TicketRef, event: Event) => void;
@@ -240,6 +267,9 @@ export class TicketService {
       return ok({
         lock_token: token,
         recovered_checkpoint: r.value.recoveredCheckpoint,
+        system_addendum: formatExecutorAddendum(
+          this.opts.executorSkills ?? DEFAULT_EXECUTOR_SKILLS,
+        ),
       });
     });
   }

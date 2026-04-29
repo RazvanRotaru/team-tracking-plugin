@@ -128,12 +128,88 @@ export function renderTicketFile(args: {
   }
   if (args.events && args.events.length > 0) {
     parts.push(SECTION_EVENTS, "");
+    for (const ev of args.events) parts.push(...renderEventBullet(ev));
+    parts.push("");
+    parts.push("<details>");
+    parts.push("<summary>Raw event log (JSONL)</summary>", "");
     parts.push("```jsonl");
     for (const ev of args.events) parts.push(JSON.stringify(ev));
     parts.push("```");
     parts.push("");
+    parts.push("</details>", "");
   }
   return `${parts.join("\n")}`;
+}
+
+/**
+ * Human-readable rendering of a single event. Returns one or more lines —
+ * a top bullet with timestamp + type + actor, optional indented detail
+ * lines for richer event types. The canonical machine-readable form lives
+ * in the JSONL fence below; this is a sibling projection regenerated on
+ * every render, so it cannot drift.
+ */
+function renderEventBullet(ev: Event): string[] {
+  const ts = formatEventTime(ev.at);
+  switch (ev.type) {
+    case "created": {
+      const parent = ev.parent ? ` (parent: \`${ev.parent.id}\`)` : "";
+      return [`- **${ts}** · created ${ev.ticket_type} "${ev.title}" · ${ev.priority}${parent}`];
+    }
+    case "status_change": {
+      const who = ev.by ? ` · by \`${ev.by}\`` : "";
+      return [`- **${ts}** · status · ${ev.from_status ?? "—"} → ${ev.to_status}${who}`];
+    }
+    case "lock_change": {
+      const recovered = ev.recovered_from ? ` (recovered from \`${ev.recovered_from}\`)` : "";
+      const finalSt = ev.final_status ? ` · → ${ev.final_status}` : "";
+      return [`- **${ts}** · lock · ${ev.action} by \`${ev.owner}\`${recovered}${finalSt}`];
+    }
+    case "checkpoint": {
+      const sha = ev.commit_id.length > 7 ? ev.commit_id.slice(0, 7) : ev.commit_id;
+      const lines = [`- **${ts}** · checkpoint · \`${ev.by}\` @ \`${sha}\``];
+      if (ev.update) lines.push(`  - update: ${oneLine(ev.update)}`);
+      if (ev.progress_summary) lines.push(`  - progress: ${oneLine(ev.progress_summary)}`);
+      return lines;
+    }
+    case "progress": {
+      const lines = [`- **${ts}** · progress · \`${ev.by}\``];
+      if (ev.status) lines.push(`  - status: → ${ev.status}`);
+      if (ev.update) lines.push(`  - update: ${oneLine(ev.update)}`);
+      if (ev.progress_summary) lines.push(`  - progress: ${oneLine(ev.progress_summary)}`);
+      return lines;
+    }
+    case "log": {
+      const who = ev.by ? `\`${ev.by}\`` : "—";
+      return [`- **${ts}** · log · ${who} · ${oneLine(ev.line)}`];
+    }
+    case "message": {
+      const reply = ev.in_reply_to ? ` · ↩ \`${ev.in_reply_to}\`` : "";
+      const lines = [`- **${ts}** · ${ev.kind} from \`${ev.from}\`${reply}`];
+      if (ev.body) lines.push(`  - ${oneLine(ev.body)}`);
+      return lines;
+    }
+    case "fields_change": {
+      const fields = Object.keys(ev.changes);
+      const who = ev.by ? ` · by \`${ev.by}\`` : "";
+      return [`- **${ts}** · fields${who} · ${fields.join(", ")}`];
+    }
+  }
+}
+
+/**
+ * `2026-04-29T10:30:00.123Z` → `2026-04-29 10:30:00Z`. Falls back to the
+ * raw string if it doesn't parse, so we never lose information.
+ */
+function formatEventTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const pad = (n: number) => n.toString().padStart(2, "0");
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}Z`;
+}
+
+/** Flatten newlines and runs of whitespace into single spaces for one-line bullets. */
+function oneLine(s: string): string {
+  return s.replace(/\s+/g, " ").trim();
 }
 
 /**
