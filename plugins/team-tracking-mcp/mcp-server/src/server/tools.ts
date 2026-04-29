@@ -189,7 +189,9 @@ export function registerTools(server: McpServer, service: TicketService): void {
     {
       description:
         "Acquire the lock for a ticket. Returns a lock_token that must accompany subsequent " +
-        "checkpoint/release/report calls. If a previous lock was stale, returns recovered_checkpoint.",
+        "checkpoint/release/report calls. If a previous lock was stale, returns recovered_checkpoint. " +
+        "Also returns system_addendum — a server-injected instruction the executor must obey " +
+        "(names the skill(s) to load before continuing).",
       inputSchema: AcquireSchema,
     },
     async ({ ref, owner }) => unwrap(await service.acquireTicket(ref, owner)),
