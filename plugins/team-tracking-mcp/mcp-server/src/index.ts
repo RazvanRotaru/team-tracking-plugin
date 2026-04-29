@@ -1,4 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { JiraAdapter, JiraWebhookReceiver } from "./adapters/jira/index.js";
@@ -10,6 +13,34 @@ import { TicketService } from "./server/service.js";
 import { registerTools } from "./server/tools.js";
 
 export const VERSION = "0.0.1";
+
+/**
+ * Read a SKILL.md from the plugin's `skills/` tree relative to this
+ * bundle. Returns null if the file isn't there (test harnesses bundling
+ * just the server, e.g.) so callers can fall back to a name-only
+ * addendum without crashing.
+ */
+function readSkillBody(skillName: string): string | null {
+  try {
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    // dist/index.js → ../../skills/<name>/SKILL.md
+    // src/index.ts (tsx) → ../skills/<name>/SKILL.md
+    const candidates = [
+      path.resolve(here, "..", "..", "skills", skillName, "SKILL.md"),
+      path.resolve(here, "..", "skills", skillName, "SKILL.md"),
+    ];
+    for (const p of candidates) {
+      try {
+        return readFileSync(p, "utf8");
+      } catch {
+        /* try next candidate */
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Adapter plus auxiliary lifecycle resources (currently the optional
@@ -57,12 +88,14 @@ export async function buildAdapter(config: Config): Promise<BuiltAdapter> {
 
 export function buildServer(adapter: TrackerAdapter, ttlSeconds: number): McpServer {
   const mutex = new RefMutex();
+  const executeBody = readSkillBody("team-tracking-execute");
   const service = new TicketService(adapter, mutex, {
     ttlSeconds,
     now: () => new Date().toISOString(),
     mintToken: () => `tok_${randomUUID()}`,
     mintMessageId: () => `msg_${randomUUID()}`,
     mintEventId: () => `evt_${randomUUID()}`,
+    executorSkills: [{ name: "team-tracking-execute", body: executeBody ?? undefined }],
   });
   const server = new McpServer(
     { name: "team-tracking-mcp", version: VERSION },

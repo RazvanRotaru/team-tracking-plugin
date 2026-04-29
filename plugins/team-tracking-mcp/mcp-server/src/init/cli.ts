@@ -157,6 +157,19 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (typeof first === "string") {
+    const { runExec, execUsage, isExecSubcommand } = await import("./exec.js");
+    if (isExecSubcommand(first)) {
+      if (argv[1] === "--help" || argv[1] === "-h") {
+        process.stdout.write(execUsage());
+        return;
+      }
+      const code = await runExec(first, argv.slice(1));
+      process.exitCode = code;
+      return;
+    }
+  }
+
   // Strip a leading literal "init" subcommand if present.
   const rest = first === "init" ? argv.slice(1) : argv;
 
