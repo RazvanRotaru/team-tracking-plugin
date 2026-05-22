@@ -39,6 +39,49 @@ describe("config", () => {
     await fs.writeFile(target, JSON.stringify({ version: 1, adapter: "wat" }), "utf8");
     await expect(loadConfig(target)).rejects.toThrow();
   });
+
+  it("accepts an optional sharedBoard adapter config + per-project useSharedBoard flag", async () => {
+    const cfg: Config = {
+      version: 1,
+      adapter: "obsidian-kanban",
+      adapterConfig: {
+        vaultPath: path.join(dir, "vault"),
+        sharedBoard: { path: "shared/board.md" },
+      },
+      projects: [
+        { name: "Autopilot", adapterProjectRef: "projects/Autopilot" },
+        {
+          name: "apollo-design-system",
+          adapterProjectRef: "projects/apollo-design-system",
+          useSharedBoard: false,
+        },
+      ],
+      lockTtlSeconds: 1800,
+    };
+    const target = path.join(dir, "shared.json");
+    await saveConfig(cfg, target);
+    const loaded = await loadConfig(target);
+    expect(loaded).toEqual(cfg);
+  });
+
+  it("rejects sharedBoard.path that lives under projects/ (would collide with per-project board)", async () => {
+    const target = path.join(dir, "collide.json");
+    await fs.writeFile(
+      target,
+      JSON.stringify({
+        version: 1,
+        adapter: "obsidian-kanban",
+        adapterConfig: {
+          vaultPath: path.join(dir, "vault"),
+          sharedBoard: { path: "projects/Autopilot/board.md" },
+        },
+        projects: [{ name: "Autopilot", adapterProjectRef: "projects/Autopilot" }],
+        lockTtlSeconds: 1800,
+      }),
+      "utf8",
+    );
+    await expect(loadConfig(target)).rejects.toThrow(/must not live under projects/);
+  });
 });
 
 describe("ensureGitignored", () => {

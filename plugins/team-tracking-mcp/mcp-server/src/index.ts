@@ -55,7 +55,14 @@ export type BuiltAdapter = {
 export async function buildAdapter(config: Config): Promise<BuiltAdapter> {
   if (config.adapter === "obsidian-kanban") {
     const a = new ObsidianKanbanAdapter(config.adapterConfig.vaultPath);
-    await a.init(config.adapterConfig);
+    await a.init({
+      // Forward the adapter-level config plus the top-level projects list so
+      // the adapter can resolve per-project `useSharedBoard` flags. The
+      // discriminated-union shape means `sharedBoard` is `undefined` when
+      // omitted, which the adapter treats as "shared mode off".
+      ...config.adapterConfig,
+      projects: config.projects,
+    });
     return { adapter: a, dispose: async () => {} };
   }
   if (config.adapter === "jira") {

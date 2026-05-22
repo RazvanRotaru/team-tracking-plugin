@@ -118,3 +118,57 @@ So if a subtask exists but you don't see it on the board: that's the contract, n
 | "All my subtasks are `Done` but the task is still `Todo`" | Auto-flip checks every immediate child. If you missed one (or have a sibling task without children), the parent stays put. `get_ticket(parentRef)` and inspect its `children`. |
 | "I edited `## Children` and it disappeared on the next save" | Don't. The adapter rewrites it. |
 | "I see a card on the board but `list_board` doesn't return it" | Likely the ticket file was deleted or its frontmatter is malformed. Run `get_ticket(ref)` — if it returns null, the file is gone but the card line wasn't cleaned up. Re-create or delete the orphan card. |
+
+## Shared board across projects
+
+Multiple repos can share a single `board.md` while keeping their own ticket folders. Configure once at the adapter level:
+
+```json
+{
+  "version": 1,
+  "adapter": "obsidian-kanban",
+  "adapterConfig": {
+    "vaultPath": "/path/to/Vault",
+    "sharedBoard": { "path": "shared/board.md" }
+  },
+  "projects": [
+    { "name": "Autopilot",            "adapterProjectRef": "projects/Autopilot" },
+    { "name": "apollo-design-system", "adapterProjectRef": "projects/apollo-design-system" }
+  ],
+  "lockTtlSeconds": 1800
+}
+```
+
+Every repo that enrolls (its `.team-tracking/config.json` carries the same `sharedBoard.path`) writes its cards to the one file. The `projects/<Repo>/tickets/` tree stays per-repo. Per-project `board.md` files are **not** created for opted-in projects; the shared file is the single source of truth.
+
+### Card disambiguation
+
+Cards on the shared board are identified by their wiki-link target (`[[projects/<Repo>/<id>/ticket|<slug>]]`), which already encodes the repo. The adapter additionally appends a `#<Repo>` tag to each card head; combined with the Obsidian Kanban plugin's tag-filter, this gives you a free per-repo view.
+
+### `list_board(project)` returns only that project's cards
+
+The shared file holds cards from many projects, but `list_board("Autopilot")` filters down to the wiki-links rooted at `projects/Autopilot/`. The per-project contract is unchanged from a caller's point of view.
+
+### Per-project opt-out
+
+A project can keep its own `board.md` by setting `useSharedBoard: false` in its entry. The shared board ignores it, and `ensureProject` creates `projects/<Name>/board.md` as before. Useful when one repo's work has different visibility constraints than the rest.
+
+### Cross-process write coordination
+
+Every read-modify-write of the shared file is held under an advisory lockfile (`<sharedPath>.lock` by default — override via `sharedBoard.lockfilePath`). Acquired with `O_EXCL`; stale lockfiles (mtime older than ~30s with no movement) are stolen on contention. **This is best-effort, not linearizable** — a hard crash mid-write can drop the in-flight update; the next acquirer rebuilds from the on-disk content. If you need strict serialization, run a single MCP server.
+
+### Recovery
+
+If the shared file is missing or has been hand-edited into an unparseable state, run:
+
+```
+team-tracking rebuild-shared-board
+```
+
+This walks **every** `projects/<Name>/` folder in the vault — not just the projects in this config — and recomputes `board.md` from scratch. Vault-wide by design: in a multi-repo setup where every repo has its own `.team-tracking/config.json`, scoping the rebuild to one config's projects would wipe cards from every other enrolled repo. The local `useSharedBoard: false` opt-out is honoured for projects this config knows about; foreign projects on disk are assumed shared.
+
+Idempotent. Held under the same lockfile.
+
+### Validation
+
+`sharedBoard.path` may not live under `projects/` (it would collide with a per-project board path). The config loader rejects this.
