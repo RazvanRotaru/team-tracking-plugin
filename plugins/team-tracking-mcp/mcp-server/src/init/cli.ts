@@ -45,11 +45,25 @@ function usage(): string {
   --config               output path (default: ./.team-tracking/config.json)
   --headless             non-interactive (currently the only mode)
 
+obsidian-kanban shared-board mode (multi-repo single board):
+  --shared-board-path  vault-relative path to the shared board.md
+                       (e.g. "shared/board.md"). When set, the configured
+                       project writes its cards to this file instead of
+                       projects/<name>/board.md. To enroll multiple repos
+                       in the same shared board, point each repo's config
+                       at the same vault and the same --shared-board-path.
+
 webpage flow (no adapter args):
   --bind <host>        interface to bind on (default: 127.0.0.1).
                        use a LAN/Tailscale IP or 0.0.0.0 to reach from
                        another machine. token still gates auth.
   --no-browser         don't open a browser, just print the URL
+
+other subcommands:
+  team-tracking listen --help
+  team-tracking rebuild-shared-board   recompute the shared board.md
+                                       from the underlying ticket files
+  team-tracking <acquire|checkpoint|release|progress|log|message> --help
 `;
 }
 
@@ -74,10 +88,17 @@ export async function runHeadlessInit(argv: readonly string[]): Promise<{
     }
     const adapterProjectRef =
       typeof args["project-ref"] === "string" ? args["project-ref"] : `projects/${projectName}`;
+    const sharedBoardArg = args["shared-board-path"];
+    const sharedBoardPath =
+      typeof sharedBoardArg === "string" && sharedBoardArg.length > 0 ? sharedBoardArg : undefined;
+    const adapterConfig: Record<string, unknown> = { vaultPath: path.resolve(args.vault) };
+    if (sharedBoardPath) {
+      adapterConfig.sharedBoard = { path: sharedBoardPath };
+    }
     config = ConfigSchema.parse({
       version: 1,
       adapter: "obsidian-kanban",
-      adapterConfig: { vaultPath: path.resolve(args.vault) },
+      adapterConfig,
       projects: [{ name: projectName, adapterProjectRef }],
       lockTtlSeconds,
     });
@@ -153,6 +174,17 @@ async function main(): Promise<void> {
       return;
     }
     const code = await runListen(argv.slice(1));
+    process.exitCode = code;
+    return;
+  }
+
+  if (first === "rebuild-shared-board") {
+    const { runRebuildSharedBoard, rebuildUsage } = await import("./rebuild.js");
+    if (argv[1] === "--help" || argv[1] === "-h") {
+      process.stdout.write(rebuildUsage());
+      return;
+    }
+    const code = await runRebuildSharedBoard();
     process.exitCode = code;
     return;
   }

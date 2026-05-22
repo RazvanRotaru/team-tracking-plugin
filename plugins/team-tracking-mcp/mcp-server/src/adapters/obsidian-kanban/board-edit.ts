@@ -36,6 +36,15 @@ export type CardChild = {
   status: string;
 };
 
+/**
+ * Sluggify a project name into something safe to embed as an Obsidian tag.
+ * Tags must match `[A-Za-z0-9_/-]+` to render reliably; spaces and most
+ * punctuation break tag rendering. Replace any other character with `-`.
+ */
+function projectTagSlug(name: string): string {
+  return name.replace(/[^A-Za-z0-9_/-]/g, "-").replace(/-+/g, "-");
+}
+
 export function formatCard(args: {
   id: string;
   slug: string;
@@ -43,9 +52,16 @@ export function formatCard(args: {
   type: TicketType;
   done: boolean;
   children?: ReadonlyArray<CardChild>;
+  /**
+   * When set, appends `#<projectTag>` to the card head. Used on the shared
+   * board so the Obsidian Kanban plugin's tag-filter gives a per-project
+   * view for free.
+   */
+  projectTag?: string;
 }): string {
   const tick = args.done ? "x" : " ";
-  const head = `- [${tick}] [[${args.id}/ticket|${args.slug}]] #${args.priority} #${args.type}`;
+  const projTag = args.projectTag ? ` #${projectTagSlug(args.projectTag)}` : "";
+  const head = `- [${tick}] [[${args.id}/ticket|${args.slug}]] #${args.priority} #${args.type}${projTag}`;
   if (!args.children || args.children.length === 0) return head;
   const tail = args.children
     .map((c) => {

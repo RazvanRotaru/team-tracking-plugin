@@ -132,6 +132,24 @@ node plugins/team-tracking-mcp/mcp-server/dist/init/cli.js \
   --adapter obsidian-kanban --vault ./vault --project Acme
 ```
 
+### Shared board across repos (obsidian-kanban)
+
+Tracking multiple repos in one Obsidian vault and want a single kanban view? Add `--shared-board-path` to each repo's init, pointing at the same vault-relative file:
+
+```bash
+# in repo A
+node plugins/team-tracking-mcp/mcp-server/dist/init/cli.js \
+  --adapter obsidian-kanban --vault ~/Workspace/Vault \
+  --project A --shared-board-path shared/board.md
+
+# in repo B
+node plugins/team-tracking-mcp/mcp-server/dist/init/cli.js \
+  --adapter obsidian-kanban --vault ~/Workspace/Vault \
+  --project B --shared-board-path shared/board.md
+```
+
+Tickets still live in `projects/<repo>/tickets/`; only `board.md` is shared. Cards are tagged `#<repo>` so the Obsidian Kanban plugin's filter gives a per-repo view. Cross-process writes are serialised via an advisory lockfile. Recovery: `team-tracking rebuild-shared-board`. Per-project opt-out by hand-editing `projects[].useSharedBoard: false`. See the `team-tracking-obsidian-kanban` skill for the full contract.
+
 ## Try the demo
 
 A pre-populated example vault is committed under [`examples/demo/`](examples/), so you can see what an orchestrator-driven board looks like without configuring anything. Each ticket is plain markdown — the layout is browseable directly on GitHub.

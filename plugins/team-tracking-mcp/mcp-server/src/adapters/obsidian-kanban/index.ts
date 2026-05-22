@@ -32,6 +32,7 @@ import {
   parseTicketFile,
   renderTicketFile,
 } from "./frontmatter.js";
+import { withLock } from "./shared-board-lock.js";
 import { slugify, uniqueSlug } from "./slug.js";
 import {
   ensureDir,
@@ -48,12 +49,30 @@ const BOARD_STATUS_PRIORITY: Record<string, number> = {
 };
 const PRIORITY_ORDER: Record<string, number> = { P0: 0, P1: 1, P2: 2 };
 
+export type SharedBoardConfig = {
+  /** Vault-relative path. */
+  path: string;
+  /** Vault-relative lockfile path. Defaults to `${path}.lock`. */
+  lockfilePath?: string;
+};
+
 export type ObsidianKanbanConfig = {
   vaultPath: string;
+  sharedBoard?: SharedBoardConfig;
+};
+
+type ResolvedSharedBoard = {
+  /** Absolute path to the shared board.md. */
+  absPath: string;
+  /** Absolute path to the lockfile. */
+  lockfileAbsPath: string;
 };
 
 export class ObsidianKanbanAdapter implements TrackerAdapter {
   private vaultPath: string;
+  private sharedBoard: ResolvedSharedBoard | null = null;
+  /** project name → useSharedBoard flag. Empty when sharing is off. */
+  private projectShareFlags: Map<string, boolean> = new Map();
 
   constructor(vaultPath: string) {
     this.vaultPath = vaultPath;
@@ -63,7 +82,32 @@ export class ObsidianKanbanAdapter implements TrackerAdapter {
     if (typeof config.vaultPath === "string") {
       this.vaultPath = config.vaultPath;
     }
+
+    const shared = config.sharedBoard as SharedBoardConfig | undefined;
+    if (shared && typeof shared.path === "string") {
+      const absPath = path.join(this.vaultPath, shared.path);
+      const lockfileRel = shared.lockfilePath ?? `${shared.path}.lock`;
+      this.sharedBoard = {
+        absPath,
+        lockfileAbsPath: path.join(this.vaultPath, lockfileRel),
+      };
+    } else {
+      this.sharedBoard = null;
+    }
+
+    this.projectShareFlags = new Map();
+    const projects =
+      (config.projects as ReadonlyArray<{ name: string; useSharedBoard?: boolean }> | undefined) ??
+      [];
+    for (const p of projects) {
+      // Defaults to true when shared-board is configured; ignored otherwise.
+      this.projectShareFlags.set(p.name, p.useSharedBoard ?? true);
+    }
+
     await ensureDir(this.vaultPath);
+    if (this.sharedBoard) {
+      await this.ensureSharedBoard();
+    }
   }
 
   // ── path helpers ────────────────────────────────────────────────────
@@ -80,8 +124,54 @@ export class ObsidianKanbanAdapter implements TrackerAdapter {
     return path.join(this.ticketDir(ref), "ticket.md");
   }
 
-  private boardFile(project: string): string {
-    return path.join(this.projectDir(project), "board.md");
+  /**
+   * Resolve the board.md path for a given project, accounting for shared-board
+   * mode. When the project is opted in to a shared board, `shared` is true and
+   * `path` points at the single vault-wide board file; otherwise `path` points
+   * at the project's own `projects/<name>/board.md`.
+   */
+  private boardFileFor(project: string): { path: string; shared: boolean } {
+    if (this.isSharedFor(project) && this.sharedBoard) {
+      return { path: this.sharedBoard.absPath, shared: true };
+    }
+    return {
+      path: path.join(this.projectDir(project), "board.md"),
+      shared: false,
+    };
+  }
+
+  /** True when project's cards live on the shared board file. */
+  private isSharedFor(project: string): boolean {
+    if (!this.sharedBoard) return false;
+    const explicit = this.projectShareFlags.get(project);
+    return explicit ?? true;
+  }
+
+  /**
+   * Extract the project name from a card's link prefix. Cards on the shared
+   * board carry `projects/<project>/<ticket-id>` as their wiki-link target,
+   * which encodes the project deterministically.
+   */
+  private projectFromCardId(id: string): string | null {
+    const m = id.match(/^projects\/([^/]+)\//);
+    return m ? (m[1] ?? null) : null;
+  }
+
+  /**
+   * Wrap a read-modify-write of the shared board in the cross-process lock.
+   * No-op when sharing is off — falls through to a direct invocation so
+   * non-shared paths stay zero-cost.
+   */
+  private async withMaybeSharedLock<T>(shared: boolean, fn: () => Promise<T>): Promise<T> {
+    if (!shared || !this.sharedBoard) return fn();
+    return withLock(this.sharedBoard.lockfileAbsPath, fn);
+  }
+
+  private async ensureSharedBoard(): Promise<void> {
+    if (!this.sharedBoard) return;
+    if (!(await pathExists(this.sharedBoard.absPath))) {
+      await writeFileAtomic(this.sharedBoard.absPath, initialBoardText());
+    }
   }
 
   /**
@@ -120,8 +210,14 @@ export class ObsidianKanbanAdapter implements TrackerAdapter {
     const dir = this.projectDir(project);
     await ensureDir(dir);
     await ensureDir(path.join(dir, "tickets"));
-    if (!(await pathExists(this.boardFile(project)))) {
-      await writeFileAtomic(this.boardFile(project), initialBoardText());
+    // In shared-board mode, opted-in projects do NOT get their own board.md;
+    // the shared file is canonical. Opting out (useSharedBoard: false)
+    // restores the per-project board.
+    if (!this.isSharedFor(project)) {
+      const perProjectBoard = path.join(dir, "board.md");
+      if (!(await pathExists(perProjectBoard))) {
+        await writeFileAtomic(perProjectBoard, initialBoardText());
+      }
     }
     const arch = path.join(dir, "architecture.md");
     if (!(await pathExists(arch))) {
@@ -222,12 +318,16 @@ export class ObsidianKanbanAdapter implements TrackerAdapter {
   }
 
   async listBoard(project: string): Promise<TicketSummaryDTO[]> {
-    const boardText = await readFileIfExists(this.boardFile(project));
+    const board = this.boardFileFor(project);
+    const boardText = await readFileIfExists(board.path);
     if (boardText === null) return [];
     const cards = listBoardCards(boardText);
 
     const summaries: TicketSummaryDTO[] = [];
     for (const card of cards) {
+      // On the shared board, cards from other projects are filtered out so
+      // each caller sees only its own project — preserving the existing
+      // per-project contract.
       const ref = this.refFromLinkPrefix(project, card.id);
       if (!ref) continue;
       const parsed = await this.loadParsed(ref);
@@ -336,9 +436,8 @@ export class ObsidianKanbanAdapter implements TrackerAdapter {
     type: TicketFrontmatter["type"],
     slug: string,
   ): Promise<void> {
-    const boardPath = this.boardFile(ref.project);
-    const boardText = (await readFileIfExists(boardPath)) ?? initialBoardText();
     if (!BOARD_COLUMNS.includes(status)) return;
+    const board = this.boardFileFor(ref.project);
     const children = await this.collectImmediateChildSummaries(ref);
     const cardLinkPrefix = this.linkPrefix(ref);
     const cardLine = formatCard({
@@ -348,13 +447,19 @@ export class ObsidianKanbanAdapter implements TrackerAdapter {
       type,
       done: status === "Done",
       children,
+      // On the shared board, tag each card with the project so Obsidian's
+      // kanban tag-filter gives users a free per-repo view.
+      projectTag: board.shared ? ref.project : undefined,
     });
-    const next = upsertCard(boardText, {
-      id: cardLinkPrefix,
-      column: status,
-      cardLine,
+    await this.withMaybeSharedLock(board.shared, async () => {
+      const boardText = (await readFileIfExists(board.path)) ?? initialBoardText();
+      const next = upsertCard(boardText, {
+        id: cardLinkPrefix,
+        column: status,
+        cardLine,
+      });
+      await writeFileAtomic(board.path, next);
     });
-    await writeFileAtomic(boardPath, next);
   }
 
   private async collectImmediateChildSummaries(ref: TicketRef): Promise<CardChild[]> {
@@ -406,11 +511,13 @@ export class ObsidianKanbanAdapter implements TrackerAdapter {
     const cardLinkPrefix = this.linkPrefix(ref);
 
     if (!eligible) {
-      const boardPath = this.boardFile(ref.project);
-      const boardText = await readFileIfExists(boardPath);
-      if (boardText === null) return;
-      const next = deleteCard(boardText, cardLinkPrefix);
-      if (next !== boardText) await writeFileAtomic(boardPath, next);
+      const board = this.boardFileFor(ref.project);
+      await this.withMaybeSharedLock(board.shared, async () => {
+        const boardText = await readFileIfExists(board.path);
+        if (boardText === null) return;
+        const next = deleteCard(boardText, cardLinkPrefix);
+        if (next !== boardText) await writeFileAtomic(board.path, next);
+      });
       return;
     }
 
@@ -736,5 +843,49 @@ export class ObsidianKanbanAdapter implements TrackerAdapter {
     const id = relPath.slice(0, relPath.length - "/ticket.md".length);
     if (id.length === 0) return null;
     return { project, id };
+  }
+
+  /**
+   * Rebuild the shared board.md from scratch by walking every shared-enabled
+   * project's ticket tree. Used as a recovery hatch when the shared file is
+   * missing, corrupt, or has drifted from the ticket store (e.g. after a
+   * crash mid-write). Idempotent and lock-protected.
+   */
+  async rebuildSharedBoard(): Promise<void> {
+    if (!this.sharedBoard) {
+      throw new Error("rebuildSharedBoard: no sharedBoard configured");
+    }
+    const sharedBoardAbs = this.sharedBoard.absPath;
+    await withLock(this.sharedBoard.lockfileAbsPath, async () => {
+      let boardText = initialBoardText();
+      for (const [project, useShared] of this.projectShareFlags) {
+        if (!useShared) continue;
+        await this.collectAllTicketRefs(project, async (ref) => {
+          const parsed = await this.loadParsed(ref);
+          if (!parsed) return;
+          const fm = parsed.frontmatter;
+          if (!(await this.isEligibleForCard(ref, fm))) return;
+          if (!BOARD_COLUMNS.includes(fm.status)) return;
+          const slug = path.basename(ref.id);
+          const children = await this.collectImmediateChildSummaries(ref);
+          const cardLinkPrefix = this.linkPrefix(ref);
+          const cardLine = formatCard({
+            id: cardLinkPrefix,
+            slug,
+            priority: fm.priority,
+            type: fm.type,
+            done: fm.status === "Done",
+            children,
+            projectTag: project,
+          });
+          boardText = upsertCard(boardText, {
+            id: cardLinkPrefix,
+            column: fm.status,
+            cardLine,
+          });
+        });
+      }
+      await writeFileAtomic(sharedBoardAbs, boardText);
+    });
   }
 }

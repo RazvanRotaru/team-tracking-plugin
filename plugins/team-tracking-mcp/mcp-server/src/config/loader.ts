@@ -2,8 +2,22 @@ import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { z } from "zod";
 
+export const SharedBoardConfigSchema = z.object({
+  /** Vault-relative path to the shared board.md file. e.g. "shared/board.md". */
+  path: z.string().min(1),
+  /** Vault-relative lockfile path. Defaults to `${path}.lock` when omitted. */
+  lockfilePath: z.string().min(1).optional(),
+});
+
 export const ObsidianAdapterConfigSchema = z.object({
   vaultPath: z.string().min(1),
+  /**
+   * When set, opted-in projects (default: all) write their board cards to a
+   * single shared board.md instead of per-project board.md files. The
+   * project's ticket folder layout is unchanged. Cross-process writes are
+   * serialised via an advisory lockfile.
+   */
+  sharedBoard: SharedBoardConfigSchema.optional(),
 });
 
 export const JiraAdapterConfigSchema = z.object({
@@ -37,24 +51,45 @@ export const JiraAdapterConfigSchema = z.object({
 export const ProjectEntrySchema = z.object({
   name: z.string().min(1),
   adapterProjectRef: z.string().min(1),
+  /**
+   * Per-project opt-out for shared-board mode. Only meaningful when the
+   * adapter has `sharedBoard` configured. Defaults to true (project shares
+   * the board) when sharedBoard is set; ignored when it isn't.
+   */
+  useSharedBoard: z.boolean().optional(),
 });
 
-export const ConfigSchema = z.discriminatedUnion("adapter", [
-  z.object({
-    version: z.literal(1),
-    adapter: z.literal("obsidian-kanban"),
-    adapterConfig: ObsidianAdapterConfigSchema,
-    projects: z.array(ProjectEntrySchema),
-    lockTtlSeconds: z.number().int().positive().default(1800),
-  }),
-  z.object({
-    version: z.literal(1),
-    adapter: z.literal("jira"),
-    adapterConfig: JiraAdapterConfigSchema,
-    projects: z.array(ProjectEntrySchema),
-    lockTtlSeconds: z.number().int().positive().default(1800),
-  }),
-]);
+export const ConfigSchema = z
+  .discriminatedUnion("adapter", [
+    z.object({
+      version: z.literal(1),
+      adapter: z.literal("obsidian-kanban"),
+      adapterConfig: ObsidianAdapterConfigSchema,
+      projects: z.array(ProjectEntrySchema),
+      lockTtlSeconds: z.number().int().positive().default(1800),
+    }),
+    z.object({
+      version: z.literal(1),
+      adapter: z.literal("jira"),
+      adapterConfig: JiraAdapterConfigSchema,
+      projects: z.array(ProjectEntrySchema),
+      lockTtlSeconds: z.number().int().positive().default(1800),
+    }),
+  ])
+  .superRefine((cfg, ctx) => {
+    if (cfg.adapter !== "obsidian-kanban") return;
+    const shared = cfg.adapterConfig.sharedBoard;
+    if (!shared) return;
+    const norm = shared.path.replace(/^\/+/, "");
+    if (norm.startsWith("projects/")) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["adapterConfig", "sharedBoard", "path"],
+        message:
+          "sharedBoard.path must not live under projects/ (it would collide with a per-project board.md)",
+      });
+    }
+  });
 
 export type Config = z.infer<typeof ConfigSchema>;
 export type ProjectEntry = z.infer<typeof ProjectEntrySchema>;
