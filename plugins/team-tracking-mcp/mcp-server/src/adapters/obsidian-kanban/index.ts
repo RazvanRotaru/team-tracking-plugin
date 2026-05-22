@@ -846,10 +846,23 @@ export class ObsidianKanbanAdapter implements TrackerAdapter {
   }
 
   /**
-   * Rebuild the shared board.md from scratch by walking every shared-enabled
-   * project's ticket tree. Used as a recovery hatch when the shared file is
-   * missing, corrupt, or has drifted from the ticket store (e.g. after a
-   * crash mid-write). Idempotent and lock-protected.
+   * Rebuild the shared board.md from scratch by walking **every** project
+   * directory under the vault (not just the projects in this config). Used
+   * as a recovery hatch when the shared file is missing, corrupt, or has
+   * drifted from the ticket store.
+   *
+   * **Why vault-wide, not config-scoped:** the shared board is a property
+   * of the vault, not of any single config. Multiple repos can each enrol
+   * their own project into the shared file. Scoping the rebuild to this
+   * config's projects would wipe cards from every other enrolled repo —
+   * the opposite of what "shared" means.
+   *
+   * The local `useSharedBoard: false` opt-out is honoured for projects
+   * this config knows about; foreign projects on disk are assumed shared
+   * (the rebuild has no way to discover their per-config opt-outs). If you
+   * use the opt-out, run rebuild from a config that knows about it.
+   *
+   * Idempotent and lock-protected.
    */
   async rebuildSharedBoard(): Promise<void> {
     if (!this.sharedBoard) {
@@ -858,8 +871,13 @@ export class ObsidianKanbanAdapter implements TrackerAdapter {
     const sharedBoardAbs = this.sharedBoard.absPath;
     await withLock(this.sharedBoard.lockfileAbsPath, async () => {
       let boardText = initialBoardText();
-      for (const [project, useShared] of this.projectShareFlags) {
-        if (!useShared) continue;
+      const projectsRoot = path.join(this.vaultPath, "projects");
+      const projectNames = await listSubdirs(projectsRoot);
+      for (const project of projectNames) {
+        if (project.startsWith(".")) continue;
+        // Honour explicit local opt-out; everything else (unknown +
+        // explicit opt-in) contributes to the shared board.
+        if (this.projectShareFlags.get(project) === false) continue;
         await this.collectAllTicketRefs(project, async (ref) => {
           const parsed = await this.loadParsed(ref);
           if (!parsed) return;

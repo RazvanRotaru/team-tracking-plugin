@@ -165,7 +165,9 @@ If the shared file is missing or has been hand-edited into an unparseable state,
 team-tracking rebuild-shared-board
 ```
 
-This walks every shared-enabled project's ticket tree and recomputes `board.md` from scratch. Idempotent. Held under the same lockfile.
+This walks **every** `projects/<Name>/` folder in the vault — not just the projects in this config — and recomputes `board.md` from scratch. Vault-wide by design: in a multi-repo setup where every repo has its own `.team-tracking/config.json`, scoping the rebuild to one config's projects would wipe cards from every other enrolled repo. The local `useSharedBoard: false` opt-out is honoured for projects this config knows about; foreign projects on disk are assumed shared.
+
+Idempotent. Held under the same lockfile.
 
 ### Validation
 

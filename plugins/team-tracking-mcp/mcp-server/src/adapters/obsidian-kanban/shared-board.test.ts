@@ -212,4 +212,27 @@ describe("obsidian-kanban: rebuildSharedBoard", () => {
     const second = await fs.readFile(path.join(dir, sharedPath), "utf8");
     expect(second).toBe(first);
   });
+
+  it("includes foreign projects on disk that aren't in this config", async () => {
+    // A multi-repo setup: rebuild from one repo's config (which only knows
+    // about projA) must still pick up projB's tickets that another repo
+    // wrote to disk. Otherwise rebuild from one repo wipes the other.
+    const aFull = await makeAdapter();
+    await aFull.createTicket(projA, { type: "task", title: "from-A" });
+    await aFull.createTicket(projB, { type: "task", title: "from-B" });
+
+    // New adapter that only knows about projA — simulates running rebuild
+    // from a config that lists only one of the two repos.
+    const aPartial = new ObsidianKanbanAdapter(dir);
+    await aPartial.init({
+      vaultPath: dir,
+      sharedBoard: { path: sharedPath },
+      projects: [{ name: projA }],
+    });
+
+    await aPartial.rebuildSharedBoard();
+    const text = await fs.readFile(path.join(dir, sharedPath), "utf8");
+    expect(text).toContain(`projects/${projA}/`);
+    expect(text).toContain(`projects/${projB}/`);
+  });
 });
